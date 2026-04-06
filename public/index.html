@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Protiv CS Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+  <div class="loading-text">Loading dashboard data…</div>
+</div>
+
+<!-- Top bar -->
+<header class="topbar">
+  <div class="topbar-logo">
+    <img src="https://cdn.prod.website-files.com/66671f410e61d3c1e56a316c/666d3282383f46e4eb62375f_protiv_logo.svg" alt="Protiv">
+  </div>
+  <div class="topbar-divider"></div>
+  <span class="topbar-title">Customer Success Dashboard</span>
+  <span class="topbar-spacer"></span>
+  <div class="topbar-user" id="user-info"></div>
+  <button class="btn-refresh" id="btn-refresh" title="Refresh data">↻ Refresh</button>
+  <a href="/auth/logout" class="btn-logout">Sign out</a>
+</header>
+
+<!-- Filter bar -->
+<div class="filter-bar" id="filter-bar">
+  <label>Status</label>
+  <select id="filter-status"><option value="">All Statuses</option></select>
+  <label>Size</label>
+  <select id="filter-size"><option value="">All Sizes</option></select>
+  <label>Search</label>
+  <input type="text" id="filter-search" class="search-input" placeholder="Search org name…">
+  <span class="filter-count" id="filter-count"></span>
+</div>
+
+<!-- Tabs -->
+<nav class="tab-bar">
+  <button class="tab-btn active" data-tab="tab-indicators">Indicators / Graphs</button>
+  <button class="tab-btn" data-tab="tab-details">Details</button>
+</nav>
+
+<!-- Tab 1: Indicators -->
+<div class="content">
+  <div class="tab-content active" id="tab-indicators">
+
+    <div class="section-header">
+      <h2>Pre-Launch</h2>
+      <span class="badge badge-blue" id="badge-pre-launch">0 orgs</span>
+    </div>
+    <div class="kpi-grid" id="pre-launch-kpis"></div>
+
+    <div class="chart-row">
+      <div class="chart-box">
+        <h3>Time to Launch Distribution</h3>
+        <canvas id="chart-launch-distribution"></canvas>
+      </div>
+      <div class="chart-box">
+        <h3>Pre-Launch Aging (Days Since Created)</h3>
+        <canvas id="chart-aging"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-row">
+      <div class="chart-box">
+        <h3>Launch Speed Trend by Cohort</h3>
+        <canvas id="chart-launch-trend"></canvas>
+      </div>
+      <div class="chart-box">
+        <h3>Estimated Pre-Launch Revenue</h3>
+        <canvas id="chart-pre-revenue"></canvas>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <h2>Post-Launch</h2>
+      <span class="badge badge-green" id="badge-post-launch">0 orgs</span>
+      <span class="badge badge-red" id="badge-at-risk">0 at risk</span>
+    </div>
+    <div class="kpi-grid" id="post-launch-kpis"></div>
+
+    <div class="chart-row">
+      <div class="chart-box">
+        <h3>Potential vs Actual Billable Users</h3>
+        <canvas id="chart-billable-gap"></canvas>
+      </div>
+      <div class="chart-box">
+        <h3>Bonus Payment Activity (30d)</h3>
+        <canvas id="chart-bonus-activity"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-row">
+      <div class="chart-box">
+        <h3>Incentive Approval Activity (30d)</h3>
+        <canvas id="chart-incentive-activity"></canvas>
+      </div>
+      <div class="chart-box">
+        <h3>Red Flag Breakdown</h3>
+        <canvas id="chart-red-flags"></canvas>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <h2>Top &amp; Bottom Performers</h2>
+    </div>
+    <div class="pct-grid" id="percentile-tables"></div>
+
+  </div>
+
+  <!-- Tab 2: Details -->
+  <div class="tab-content" id="tab-details">
+    <div class="table-controls">
+      <input type="text" id="table-search" placeholder="Search details table…">
+      <button class="btn-export" id="btn-export">⬇ Export CSV</button>
+      <span class="filter-count" id="table-count"></span>
+    </div>
+    <div class="details-wrap">
+      <table class="details-table" id="details-table">
+        <thead><tr id="details-thead"></tr></thead>
+        <tbody id="details-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<script src="/js/app.js" defer></script>
+</body>
+</html>
