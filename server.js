@@ -1,5 +1,5 @@
 /**
- * Protiv CS Dashboard — Express Server
+ * Protiv CS Dashboard â Express Server
  * Simple password auth (no Google OAuth needed)
  */
 
@@ -9,8 +9,77 @@ const session = require('express-session');
 const helmet = require('helmet');
 const compression = require('compression');
 const path = require('path');
+const axios = require('axios');
 const { fetchCard } = require('./lib/metabase');
 const { buildDashboardData } = require('./lib/transforms');
+
+// ---------------------------------------------------------------------------
+// Stripe API client (optional â only active if STRIPE_SECRET_KEY is set)
+// ---------------------------------------------------------------------------
+const stripeClient = process.env.STRIPE_SECRET_KEY
+  ? axios.create({
+      baseURL: 'https://api.stripe.com/v1',
+      timeout: 15000,
+      headers: { 'Authorization': `Bearer ${process.env.STRIPE_SECRET_KEY}` }
+    })
+  : null;
+
+/**
+ * For a single subscription, fetch the quantity of billed users from the
+ * current open (draft) invoice, falling back to the latest paid invoice.
+ * Returns null if no invoice or Stripe key not configured.
+ */
+async function getStripeBilledUsersForSub(subId) {
+  if (!stripeClient) return null;
+  try {
+    // Try draft invoice first (current open period)
+    for (const status of ['draft', 'paid']) {
+      const res = await stripeClient.get('/invoices', {
+        params: { subscription: subId, status, limit: 1 }
+      });
+      const invoice = res.data?.data?.[0];
+      if (!invoice) continue;
+
+      // Fetch line items for this invoice
+      const linesRes = await stripeClient.get(`/invoices/${invoice.id}/lines`, {
+        params: { limit: 100 }
+      });
+      const lines = linesRes.data?.data || [];
+
+      // Find the "usage" line (not excluded_usage) â $15/user metered line
+      const usageLine = lines.find(l =>
+        (l.price?.metadata?.type === 'usage') ||
+        (l.plan?.metadata?.type === 'usage')
+      );
+      if (usageLine?.quantity != null) return usageLine.quantity;
+    }
+    return null;
+  } catch (err) {
+    console.warn(`[Stripe] Failed for ${subId}: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Fetch billed user counts for all provided subscription IDs in parallel.
+ * Returns { [subId]: quantity } map.
+ */
+async function fetchStripeBilledUsers(subIds) {
+  if (!stripeClient || !subIds.length) return {};
+  console.log(`[Stripe] Fetching billed users for ${subIds.length} subscriptions...`);
+
+  // Process in chunks of 10 to stay well within Stripe rate limits
+  const CHUNK = 10;
+  const result = {};
+  for (let i = 0; i < subIds.length; i += CHUNK) {
+    const chunk = subIds.slice(i, i + CHUNK);
+    const values = await Promise.all(chunk.map(id => getStripeBilledUsersForSub(id)));
+    chunk.forEach((id, idx) => { if (values[idx] != null) result[id] = values[idx]; });
+  }
+
+  console.log(`[Stripe] Got billed users for ${Object.keys(result).length}/${subIds.length} subs`);
+  return result;
+}
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -50,7 +119,7 @@ if (process.env.TRUST_PROXY === 'true') {
 }
 
 // ---------------------------------------------------------------------------
-// Auth — simple password
+// Auth â simple password
 // ---------------------------------------------------------------------------
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '';
 
@@ -68,7 +137,7 @@ app.get('/login', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Protiv CS Dashboard — Login</title>
+  <title>Protiv CS Dashboard â Login</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -144,7 +213,14 @@ async function fetchDashboardData(force = false) {
   ]);
 
   console.log(`[Data] Fetched: billing=${csBilling.length}, bonuses=${bonusesPaid.length}, invites=${missingInvites.length}`);
-  const data = buildDashboardData(csBilling, bonusesPaid, missingInvites);
+
+  // Collect unique Stripe subscription IDs from billing data, then fetch billed quantities
+  const subIds = [...new Set(
+    csBilling.filter(r => r.stripe_subscription_id).map(r => r.stripe_subscription_id)
+  )];
+  const stripeData = await fetchStripeBilledUsers(subIds);
+
+  const data = buildDashboardData(csBilling, bonusesPaid, missingInvites, stripeData);
   cache = { data, timestamp: Date.now() };
   return data;
 }
