@@ -1,5 +1,5 @@
 /* ================================================================
-   Protiv CS Dashboard â Frontend Application (Light Theme)
+   Protiv CS Dashboard - Frontend Application (Light Theme)
    ================================================================ */
 
 (function () {
@@ -19,11 +19,11 @@
   // ---------------------------------------------------------------------------
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => document.querySelectorAll(s);
-  const fmt = (n) => n == null ? 'â' : Number(n).toLocaleString('en-US');
-  const fmtDollar = (n) => n == null ? 'â' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-  const fmtPct = (n) => n == null ? 'â' : Number(n).toFixed(1) + '%';
-  const fmtDec = (n, d = 2) => n == null ? 'â' : Number(n).toFixed(d);
-  const shortDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'â';
+  const fmt = (n) => n == null ? '-' : Number(n).toLocaleString('en-US');
+  const fmtDollar = (n) => n == null ? '-' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  const fmtPct = (n) => n == null ? '-' : Number(n).toFixed(1) + '%';
+  const fmtDec = (n, d = 2) => n == null ? '-' : Number(n).toFixed(d);
+  const shortDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
 
   // Light-theme chart colors
   const COLORS = {
@@ -98,7 +98,7 @@
     const el = $('#loading');
     el.innerHTML = `
       <div style="text-align:center;color:#E53E3E;">
-        <div style="font-size:40px;margin-bottom:12px;">â </div>
+        <div style="font-size:40px;margin-bottom:12px;"></div>
         <div style="font-size:16px;font-weight:600;margin-bottom:8px;">Failed to load dashboard</div>
         <div style="font-size:13px;color:#718096;margin-bottom:16px;">${msg}</div>
         <button onclick="location.reload()" class="btn-refresh">Retry</button>
@@ -121,18 +121,18 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Refresh
+  //Refresh
   // ---------------------------------------------------------------------------
   function setupRefresh() {
     $('#btn-refresh').addEventListener('click', async () => {
       $('#btn-refresh').disabled = true;
-      $('#btn-refresh').textContent = 'â» Refreshingâ¦';
+      $('#btn-refresh').textContent = 'Refreshing...';
       try {
         await fetch('/api/refresh', { method: 'POST' });
         await loadData();
       } finally {
         $('#btn-refresh').disabled = false;
-        $('#btn-refresh').textContent = 'â» Refresh';
+        $('#btn-refresh').textContent = 'Refresh';
       }
     });
   }
@@ -228,12 +228,12 @@
     const aging60 = pre.filter(o => o.days_since_created >= 60).length;
 
     $('#pre-launch-kpis').innerHTML = kpiCards([
-      { label: 'Avg Time to Launch', value: `${avgTime}d`, sub: `Median: ${medTime}d`, icon: 'â±' },
-      { label: 'Pre-Launch Orgs', value: fmt(pre.length), sub: `${aging30} aging 30d+`, icon: 'ð' },
-      { label: 'Aging 60+ Days', value: fmt(aging60), cls: aging60 > 0 ? 'warning' : '', icon: 'â ' },
-      { label: 'Est. Billable Users', value: fmt(estBillable), sub: `Avg ${fmt(Math.round(estBillable / (pre.length || 1)))} per org`, icon: 'ð¥' },
-      { label: 'Est. MRR', value: fmtDollar(estMRR), icon: 'ð°' },
-      { label: 'Est. ARR', value: fmtDollar(estARR), icon: 'ð' },
+      { label: 'Avg Time to Launch', value: `${avgTime}d`, sub: `Median: ${medTime}d`, icon: '' },
+      { label: 'Pre-Launch Orgs', value: fmt(pre.length), sub: `${aging30} aging 30d+`, icon: '' },
+      { label: 'Aging 60+ Days', value: fmt(aging60), cls: aging60 > 0 ? 'warning' : '', icon: '' },
+      { label: 'Est. Billable Users', value: fmt(estBillable), sub: `Avg ${fmt(Math.round(estBillable / (pre.length || 1)))} per org`, icon: '' },
+      { label: 'Est. MRR', value: fmtDollar(estMRR), icon: '' },
+      { label: 'Est. ARR', value: fmtDollar(estARR), icon: '' },
     ]);
   }
 
@@ -290,14 +290,14 @@
     const paidOrgs30d = post.filter(o => o.total_bonuses_paid_30d > 0).length;
 
     $('#post-launch-kpis').innerHTML = kpiCards([
-      { label: 'Post-Launch Orgs', value: fmt(post.length), icon: 'ð' },
-      { label: 'At Risk', value: fmt(atRisk.length), cls: atRisk.length > 0 ? 'danger' : 'success', sub: fmtPct(post.length ? (atRisk.length / post.length * 100) : 0) + ' of post-launch', icon: 'ð¨' },
-      { label: 'Billable Users (Actual)', value: fmt(pl.billable_users.total_actual), sub: `Gap: ${fmt(pl.billable_users.gap)}`, icon: 'ð¤' },
-      { label: 'Billable Ratio', value: fmtPct(pl.billable_users.ratio), icon: 'ð' },
-      { label: 'Missing Invites', value: fmt(pl.missing_invites.total), sub: `${pl.missing_invites.orgs_with_missing} orgs affected`, cls: pl.missing_invites.total > 0 ? 'warning' : '', icon: 'â' },
-      { label: 'Bonuses Paid (30d)', value: fmtDollar(totalBonuses30d), sub: `${paidOrgs30d} orgs paying`, icon: 'ðµ' },
-      { label: 'Avg Bonus/Person (30d)', value: fmtDollar(pl.bonus_performance.last_30d.avg_per_user), icon: 'ð¤' },
-      { label: 'Orgs Paying Bonuses (30d)', value: fmt(pl.bonus_activity.paid_30d), sub: `${pl.bonus_activity.not_paid_30d} not paying`, cls: pl.bonus_activity.not_paid_30d > 0 ? 'warning' : '', icon: 'â' },
+      { label: 'Post-Launch Orgs', value: fmt(post.length), icon: '' },
+      { label: 'At Risk', value: fmt(atRisk.length), cls: atRisk.length > 0 ? 'danger' : 'success', sub: fmtPct(post.length ? (atRisk.length / post.length * 100) : 0) + ' of post-launch', icon: '' },
+      { label: 'Billable Users (Actual)', value: fmt(pl.billable_users.total_actual), sub: `Gap: ${fmt(pl.billable_users.gap)}`, icon: '' },
+      { label: 'Billable Ratio', value: fmtPct(pl.billable_users.ratio), icon: '' },
+      { label: 'Missing Invites', value: fmt(pl.missing_invites.total), sub: `${pl.missing_invites.orgs_with_missing} orgs affected`, cls: pl.missing_invites.total > 0 ? 'warning' : '', icon: '' },
+      { label: 'Bonuses Paid (30d)', value: fmtDollar(totalBonuses30d), sub: `${paidOrgs30d} orgs paying`, icon: '' },
+      { label: 'Avg Bonus/Person (30d)', value: fmtDollar(pl.bonus_performance.last_30d.avg_per_user), icon: '' },
+      { label: 'Orgs Paying Bonuses (30d)', value: fmt(pl.bonus_activity.paid_30d), sub: `${pl.bonus_activity.not_paid_30d} not paying`, cls: pl.bonus_activity.not_paid_30d > 0 ? 'warning' : '', icon: '' },
     ]);
   }
 
@@ -349,19 +349,19 @@
     el.innerHTML = '';
 
     if (pcts.top_bonus_orgs.length) {
-      el.innerHTML += pctTable('Top 10% â Bonus per Person', pcts.top_bonus_orgs, '$');
+      el.innerHTML += pctTable('Top 10% - Bonus per Person', pcts.top_bonus_orgs, '$');
     }
     if (pcts.bottom_bonus_orgs.length) {
-      el.innerHTML += pctTable('Bottom 10% â Bonus per Person', pcts.bottom_bonus_orgs, '$');
+      el.innerHTML += pctTable('Bottom 10% - Bonus per Person', pcts.bottom_bonus_orgs, '$');
     }
     if (pcts.fastest_launch.length) {
-      el.innerHTML += pctTable('Top 10% â Fastest Launch', pcts.fastest_launch, 'd');
+      el.innerHTML += pctTable('Top 10% - Fastest Launch', pcts.fastest_launch, 'd');
     }
     if (pcts.slowest_launch.length) {
-      el.innerHTML += pctTable('Bottom 10% â Slowest Launch', pcts.slowest_launch, 'd');
+      el.innerHTML += pctTable('Bottom 10% - Slowest Launch', pcts.slowest_launch, 'd');
     }
     if (pcts.top_missing_invites && pcts.top_missing_invites.length) {
-      el.innerHTML += pctTable('Worst â Missing Invites', pcts.top_missing_invites, '');
+      el.innerHTML += pctTable('Worst - Missing Invites', pcts.top_missing_invites, '');
     }
   }
 
@@ -429,7 +429,7 @@
   function renderDetailsHeader() {
     const thead = $('#details-thead');
     thead.innerHTML = DETAIL_COLS.map(c =>
-      `<th data-col="${c.key}">${c.label}<span class="sort-arrow">${sortCol === c.key ? (sortAsc ? 'â²' : 'â¼') : ''}</span></th>`
+      `<th data-col="${c.key}">${c.label}<span class="sort-arrow">${sortCol === c.key ? (sortAsc ? '\u25B2' : '\u25BC') : ''}</span></th>`
     ).join('');
 
     thead.querySelectorAll('th').forEach(th => {
@@ -482,7 +482,7 @@
   }
 
   function formatCell(val, type) {
-    if (val == null || val === '') return '<span style="color:#A0AEC0">â</span>';
+    if (val == null || val === '') return '<span style="color:#A0AEC0">-</span>';
     switch (type) {
       case 'num': return fmt(val);
       case 'dollar': return fmtDollar(val);
@@ -492,7 +492,7 @@
         : '<span class="flag-pill green">NO</span>';
       case 'pct': return fmtPct(val);
       case 'link':
-        return `<a href="${val}" target="_blank" rel="noopener" style="color:#3898EC;text-decoration:none;font-weight:500;white-space:nowrap;">â Stripe</a>`;
+        return `<a href="${val}" target="_blank" rel="noopener" style="color:#3898EC;text-decoration:none;font-weight:500;white-space:nowrap;"> Stripe</a>`;
       case 'status':
         if (val === 'billing_started') return '<span class="status-pill billing">billing_started</span>';
         if (val === 'initial_prepayment_collected') return '<span class="status-pill prepay">prepaid</span>';
