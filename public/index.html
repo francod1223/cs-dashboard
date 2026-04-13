@@ -12,7 +12,7 @@
 <!-- Loading overlay -->
 <div class="loading-overlay" id="loading">
   <div class="spinner"></div>
-  <div class="loading-text">Loading dashboard data…</div>
+  <div class="loading-text">Loading dashboard dataâ¦</div>
 </div>
 
 <!-- Top bar -->
@@ -24,7 +24,7 @@
   <span class="topbar-title">Customer Success Dashboard</span>
   <span class="topbar-spacer"></span>
   <div class="topbar-user" id="user-info"></div>
-  <button class="btn-refresh" id="btn-refresh" title="Refresh data">↻ Refresh</button>
+  <button class="btn-refresh" id="btn-refresh" title="Refresh data">â» Refresh</button>
   <a href="/auth/logout" class="btn-logout">Sign out</a>
 </header>
 
@@ -35,13 +35,14 @@
   <label>Size</label>
   <select id="filter-size"><option value="">All Sizes</option></select>
   <label>Search</label>
-  <input type="text" id="filter-search" class="search-input" placeholder="Search org name…">
+  <input type="text" id="filter-search" class="search-input" placeholder="Search org nameâ¦">
   <span class="filter-count" id="filter-count"></span>
 </div>
 
 <!-- Tabs -->
 <nav class="tab-bar">
   <button class="tab-btn active" data-tab="tab-indicators">Indicators / Graphs</button>
+  <button class="tab-btn" data-tab="tab-multi-tenant">Multi-Tenant</button>
   <button class="tab-btn" data-tab="tab-details">Details</button>
 </nav>
 
@@ -113,11 +114,78 @@
 
   </div>
 
-  <!-- Tab 2: Details -->
+  <!-- Tab 2: Multi-Tenant -->
+  <div class="tab-content" id="tab-multi-tenant">
+
+    <div class="section-header">
+      <h2>Pre-Launch</h2>
+      <span class="badge badge-blue" id="mt-badge-pre-launch">0 orgs</span>
+    </div>
+    <div class="kpi-grid" id="mt-pre-launch-kpis"></div>
+
+    <div class="chart-row">
+      <div class="chart-box">
+        <h3>Time to Launch Distribution</h3>
+        <canvas id="mt-chart-launch-distribution"></canvas>
+      </div>
+      <div class="chart-box">
+        <h3>Pre-Launch Aging (Days Since Created)</h3>
+        <canvas id="mt-chart-aging"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-row">
+      <div class="chart-box">
+        <h3>Launch Speed Trend by Cohort</h3>
+        <canvas id="mt-chart-launch-trend"></canvas>
+      </div>
+      <div class="chart-box">
+        <h3>Estimated Pre-Launch Revenue</h3>
+        <canvas id="mt-chart-pre-revenue"></canvas>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <h2>Post-Launch</h2>
+      <span class="badge badge-green" id="mt-badge-post-launch">0 orgs</span>
+      <span class="badge badge-red" id="mt-badge-at-risk">0 at risk</span>
+    </div>
+    <div class="kpi-grid" id="mt-post-launch-kpis"></div>
+
+    <div class="chart-row">
+      <div class="chart-box">
+        <h3>Potential vs Actual Billable Users</h3>
+        <canvas id="mt-chart-billable-gap"></canvas>
+      </div>
+      <div class="chart-box">
+        <h3>Bonus Payment Activity (30d)</h3>
+        <canvas id="mt-chart-bonus-activity"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-row">
+      <div class="chart-box">
+        <h3>Incentive Approval Activity (30d)</h3>
+        <canvas id="mt-chart-incentive-activity"></canvas>
+      </div>
+      <div class="chart-box">
+        <h3>Red Flag Breakdown</h3>
+        <canvas id="mt-chart-red-flags"></canvas>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <h2>Top &amp; Bottom Performers</h2>
+    </div>
+    <div class="pct-grid" id="mt-percentile-tables"></div>
+
+  </div>
+
+  <!-- Tab 3: Details -->
   <div class="tab-content" id="tab-details">
     <div class="table-controls">
-      <input type="text" id="table-search" placeholder="Search details table…">
-      <button class="btn-export" id="btn-export">⬇ Export CSV</button>
+      <input type="text" id="table-search" placeholder="Search details tableâ¦">
+      <button class="btn-export" id="btn-export">â¬ Export CSV</button>
       <span class="filter-count" id="table-count"></span>
     </div>
     <div class="details-wrap">
