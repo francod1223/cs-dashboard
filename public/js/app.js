@@ -10,6 +10,7 @@
   // ---------------------------------------------------------------------------
   let DATA = null;        // Full API response
   let filteredOrgs = [];  // After filters applied
+  let mtOrgs = [];        // Multi-Tenant orgs (unfiltered)
   let sortCol = null;
   let sortAsc = true;
   let chartInstances = {};
@@ -79,6 +80,7 @@
       if (res.status === 401) { window.location.href = '/login'; return; }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       DATA = await res.json();
+      mtOrgs = (DATA.mt && DATA.mt.orgs) ? DATA.mt.orgs : [];
       populateFilters();
       applyFilters();
       render();
@@ -189,6 +191,7 @@
   function render() {
     if (!DATA) return;
     renderIndicators();
+    renderMultiTenant();
     renderDetails();
   }
 
@@ -576,6 +579,132 @@
     const s = [...arr].sort((a, b) => a - b);
     const mid = Math.floor(s.length / 2);
     return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tab: Multi-Tenant
+  // ---------------------------------------------------------------------------
+  function renderMultiTenant() {
+    if (!DATA || !DATA.mt) return;
+    const orgs = mtOrgs;
+    const agg = DATA.mt.aggregations;
+    const pre = orgs.filter(o => o.is_pre_launch);
+    const post = orgs.filter(o => o.is_post_launch);
+
+    $('#mt-badge-pre-launch').textContent = `${pre.length} orgs`;
+    $('#mt-badge-post-launch').textContent = `${post.length} orgs`;
+    const atRisk = post.filter(o => o.at_risk);
+    $('#mt-badge-at-risk').textContent = `${atRisk.length} at risk`;
+    $('#mt-badge-at-risk').className = `badge ${atRisk.length > 0 ? 'badge-red' : 'badge-green'}`;
+
+    renderMTPreLaunchKPIs(pre, agg);
+    renderMTPreLaunchCharts(agg);
+    renderMTPostLaunchKPIs(post, agg);
+    renderMTPostLaunchCharts(agg);
+    renderMTPercentiles(agg);
+  }
+
+  function renderMTPreLaunchKPIs(pre, agg) {
+    const launched = mtOrgs.filter(o => o.days_to_launch !== null && o.days_to_launch >= 0);
+    const times = launched.map(o => o.days_to_launch);
+    const avgTime = times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : 0;
+    const medTime = times.length ? medianCalc(times) : 0;
+    const estBillable = pre.reduce((s, o) => s + o.estimated_billable_users, 0);
+    const estMRR = pre.reduce((s, o) => s + o.estimated_mrr, 0);
+    const estARR = pre.reduce((s, o) => s + o.estimated_arr, 0);
+    const aging30 = pre.filter(o => o.days_since_created >= 30).length;
+    const aging60 = pre.filter(o => o.days_since_created >= 60).length;
+    $('#mt-pre-launch-kpis').innerHTML = kpiCards([
+      { label: 'Avg Time to Launch', value: `${avgTime}d`, sub: `Median: ${medTime}d`, icon: '' },
+      { label: 'Pre-Launch Orgs', value: fmt(pre.length), sub: `${aging30} aging 30d+`, icon: '' },
+      { label: 'Aging 60+ Days', value: fmt(aging60), cls: aging60 > 0 ? 'warning' : '', icon: '' },
+      { label: 'Est. Billable Users', value: fmt(estBillable), sub: `Avg ${fmt(Math.round(estBillable / (pre.length || 1)))} per org`, icon: '' },
+      { label: 'Est. MRR', value: fmtDollar(estMRR), icon: '' },
+      { label: 'Est. ARR', value: fmtDollar(estARR), icon: '' },
+    ]);
+  }
+
+  function renderMTPreLaunchCharts(agg) {
+    const dist = agg.pre_launch.time_to_launch.distribution;
+    makeChart('mt-chart-launch-distribution', 'bar', {
+      labels: dist.map(d => d.label),
+      datasets: [{ label: 'Orgs', data: dist.map(d => d.count), backgroundColor: [COLORS.blue, COLORS.green, COLORS.purple, COLORS.yellow, COLORS.red], borderRadius: 6 }]
+    }, { plugins: { legend: { display: false } } });
+
+    const aging = agg.pre_launch.aging;
+    makeChart('mt-chart-aging', 'bar', {
+      labels: aging.map(a => a.label),
+      datasets: [{ label: 'Count', data: aging.map(a => a.count), backgroundColor: [COLORS.yellow, COLORS.orange, COLORS.red, '#C53030'], borderRadius: 6 }]
+    }, { indexAxis: 'y', plugins: { legend: { display: false } } });
+
+    const trend = agg.pre_launch.launch_trend;
+    if (trend.length) {
+      makeChart('mt-chart-launch-trend', 'line', {
+        labels: trend.map(t => t.month),
+        datasets: [
+          { label: 'Avg Days', data: trend.map(t => t.avg), borderColor: COLORS.blue, backgroundColor: COLORS.blueLight, fill: true, tension: 0.3 },
+          { label: 'Median Days', data: trend.map(t => t.median), borderColor: COLORS.purple, borderDash: [5, 3], tension: 0.3 }
+        ]
+      });
+    }
+
+    const rev = agg.pre_launch.estimated_revenue;
+    makeChart('mt-chart-pre-revenue', 'bar', {
+      labels: ['Total MRR', 'Avg MRR', 'Median MRR', 'Total ARR'],
+      datasets: [{ label: 'USD', data: [rev.total_mrr, rev.avg_mrr, rev.median_mrr, rev.total_arr], backgroundColor: [COLORS.blue, COLORS.purple, COLORS.orange, COLORS.green], borderRadius: 6 }]
+    }, { plugins: { legend: { display: false } } });
+  }
+
+  function renderMTPostLaunchKPIs(post, agg) {
+    const pl = agg.post_launch;
+    const atRisk = post.filter(o => o.at_risk);
+    const totalBonuses30d = post.reduce((s, o) => s + o.total_bonuses_paid_30d, 0);
+    const paidOrgs30d = post.filter(o => o.total_bonuses_paid_30d > 0).length;
+    $('#mt-post-launch-kpis').innerHTML = kpiCards([
+      { label: 'Post-Launch Orgs', value: fmt(post.length), icon: '' },
+      { label: 'At Risk', value: fmt(atRisk.length), cls: atRisk.length > 0 ? 'danger' : 'success', sub: fmtPct(post.length ? (atRisk.length / post.length * 100) : 0) + ' of post-launch', icon: '' },
+      { label: 'Billable Users (Actual)', value: fmt(pl.billable_users.total_actual), sub: `Gap: ${fmt(pl.billable_users.gap)}`, icon: '' },
+      { label: 'Billable Ratio', value: fmtPct(pl.billable_users.ratio), icon: '' },
+      { label: 'Missing Invites', value: fmt(pl.missing_invites.total), sub: `${pl.missing_invites.orgs_with_missing} orgs affected`, cls: pl.missing_invites.total > 0 ? 'warning' : '', icon: '' },
+      { label: 'Bonuses Paid (30d)', value: fmtDollar(totalBonuses30d), sub: `${paidOrgs30d} orgs paying`, icon: '' },
+      { label: 'Avg Bonus/Person (30d)', value: fmtDollar(pl.bonus_performance.last_30d.avg_per_user), icon: '' },
+      { label: 'Orgs Paying Bonuses (30d)', value: fmt(pl.bonus_activity.paid_30d), sub: `${pl.bonus_activity.not_paid_30d} not paying`, cls: pl.bonus_activity.not_paid_30d > 0 ? 'warning' : '', icon: '' },
+    ]);
+  }
+
+  function renderMTPostLaunchCharts(agg) {
+    const pl = agg.post_launch;
+    makeChart('mt-chart-billable-gap', 'doughnut', {
+      labels: ['Actual Billed', 'Gap (Potential)'],
+      datasets: [{ data: [pl.billable_users.total_actual, pl.billable_users.gap], backgroundColor: [COLORS.green, COLORS.redLight], borderWidth: 0 }]
+    }, { cutout: '65%' });
+
+    makeChart('mt-chart-bonus-activity', 'doughnut', {
+      labels: ['Paid Bonuses', 'No Bonuses'],
+      datasets: [{ data: [pl.bonus_activity.paid_30d, pl.bonus_activity.not_paid_30d], backgroundColor: [COLORS.green, COLORS.redLight], borderWidth: 0 }]
+    }, { cutout: '65%' });
+
+    makeChart('mt-chart-incentive-activity', 'doughnut', {
+      labels: ['Active', 'Inactive'],
+      datasets: [{ data: [pl.incentive_activity.active_30d, pl.incentive_activity.inactive_30d], backgroundColor: [COLORS.blue, COLORS.yellowLight], borderWidth: 0 }]
+    }, { cutout: '65%' });
+
+    const rf = pl.at_risk.by_flag;
+    makeChart('mt-chart-red-flags', 'bar', {
+      labels: ['Bonus <$1/hr', '<50% Earning', 'No Bonus 30d', 'No Incentive 30d', 'Missing Accts'],
+      datasets: [{ label: 'Orgs', data: [rf.bonuses_below_1, rf.low_earning_staff, rf.no_bonuses_30d, rf.no_incentives_30d, rf.missing_accounts], backgroundColor: [COLORS.red, COLORS.orange, COLORS.yellow, COLORS.purple, COLORS.blue], borderRadius: 6 }]
+    }, { indexAxis: 'y', plugins: { legend: { display: false } } });
+  }
+
+  function renderMTPercentiles(agg) {
+    const pcts = agg.post_launch.percentiles;
+    const el = $('#mt-percentile-tables');
+    el.innerHTML = '';
+    if (pcts.top_bonus_orgs.length) el.innerHTML += pctTable('Top 10% - Bonus per Person', pcts.top_bonus_orgs, '$');
+    if (pcts.bottom_bonus_orgs.length) el.innerHTML += pctTable('Bottom 10% - Bonus per Person', pcts.bottom_bonus_orgs, '$');
+    if (pcts.fastest_launch.length) el.innerHTML += pctTable('Top 10% - Fastest Launch', pcts.fastest_launch, 'd');
+    if (pcts.slowest_launch.length) el.innerHTML += pctTable('Bottom 10% - Slowest Launch', pcts.slowest_launch, 'd');
+    if (pcts.top_missing_invites && pcts.top_missing_invites.length) el.innerHTML += pctTable('Worst - Missing Invites', pcts.top_missing_invites, '');
   }
 
   document.addEventListener('DOMContentLoaded', init);
