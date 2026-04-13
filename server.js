@@ -1,5 +1,5 @@
 /**
- * Protiv CS Dashboard â Express Server
+ * Protiv CS Dashboard Ã¢ÂÂ Express Server
  * Simple password auth (no Google OAuth needed)
  */
 
@@ -14,7 +14,7 @@ const { fetchCard } = require('./lib/metabase');
 const { buildDashboardData } = require('./lib/transforms');
 
 // ---------------------------------------------------------------------------
-// Stripe API client (optional â only active if STRIPE_SECRET_KEY is set)
+// Stripe API client (optional Ã¢ÂÂ only active if STRIPE_SECRET_KEY is set)
 // ---------------------------------------------------------------------------
 const stripeClient = process.env.STRIPE_SECRET_KEY
   ? axios.create({
@@ -46,7 +46,7 @@ async function getStripeBilledUsersForSub(subId) {
       });
       const lines = linesRes.data?.data || [];
 
-      // Find the "usage" line (not excluded_usage) â $15/user metered line
+      // Find the "usage" line (not excluded_usage) Ã¢ÂÂ $15/user metered line
       const usageLine = lines.find(l =>
         (l.price?.metadata?.type === 'usage') ||
         (l.plan?.metadata?.type === 'usage')
@@ -119,7 +119,7 @@ if (process.env.TRUST_PROXY === 'true') {
 }
 
 // ---------------------------------------------------------------------------
-// Auth â simple password
+// Auth Ã¢ÂÂ simple password
 // ---------------------------------------------------------------------------
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '';
 
@@ -137,7 +137,7 @@ app.get('/login', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Protiv CS Dashboard â Login</title>
+  <title>Protiv CS Dashboard Ã¢ÂÂ Login</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -206,13 +206,17 @@ async function fetchDashboardData(force = false) {
   }
 
   console.log('[Data] Fetching from Metabase...');
-  const [csBilling, bonusesPaid, missingInvites] = await Promise.all([
+  const [csBilling, bonusesPaid, missingInvites, mtBilling, mtBonuses, mtInvites] = await Promise.all([
     fetchCard(process.env.CARD_CS_BILLING || 71),
     fetchCard(process.env.CARD_BONUSES_PAID || 74),
     fetchCard(process.env.CARD_MISSING_INVITES || 73),
+    fetchCard(process.env.CARD_CS_BILLING_MT || 77),
+    fetchCard(process.env.CARD_BONUSES_PAID_MT || 78),
+    fetchCard(process.env.CARD_MISSING_INVITES_MT || 76),
   ]);
 
   console.log(`[Data] Fetched: billing=${csBilling.length}, bonuses=${bonusesPaid.length}, invites=${missingInvites.length}`);
+  console.log(`[Data] MT Fetched: billing=${mtBilling.length}, bonuses=${mtBonuses.length}, invites=${mtInvites.length}`);
 
   // Collect unique Stripe subscription IDs from billing data, then fetch billed quantities
   const subIds = [...new Set(
@@ -221,8 +225,10 @@ async function fetchDashboardData(force = false) {
   const stripeData = await fetchStripeBilledUsers(subIds);
 
   const data = buildDashboardData(csBilling, bonusesPaid, missingInvites, stripeData);
-  cache = { data, timestamp: Date.now() };
-  return data;
+  const mtData = buildDashboardData(mtBilling, mtBonuses, mtInvites, {});
+  const combined = { ...data, mt: mtData };
+  cache = { data: combined, timestamp: Date.now() };
+  return combined;
 }
 
 // ---------------------------------------------------------------------------
