@@ -8,9 +8,10 @@
   // ---------------------------------------------------------------------------
   // State
   // ---------------------------------------------------------------------------
-  let DATA = null;        // Full API response
-  let filteredOrgs = [];  // After filters applied
-  let mtOrgs = [];        // Multi-Tenant orgs (unfiltered)
+  let DATA = null;            // Full API response
+  let filteredOrgs = [];      // Yellowstone orgs after filters
+  let filteredMtOrgs = [];    // Multi-Tenant orgs after filters
+  let mtOrgs = [];            // MT orgs (raw, pre-filter)
   let sortCol = null;
   let sortAsc = true;
   let chartInstances = {};
@@ -123,7 +124,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  //Refresh
+  // Refresh
   // ---------------------------------------------------------------------------
   function setupRefresh() {
     $('#btn-refresh').addEventListener('click', async () => {
@@ -161,6 +162,7 @@
     // Attach listeners
     $('#filter-status').addEventListener('change', onFilterChange);
     $('#filter-size').addEventListener('change', onFilterChange);
+    $('#filter-db').addEventListener('change', onFilterChange);
     $('#filter-search').addEventListener('input', onFilterChange);
   }
 
@@ -174,15 +176,21 @@
     const status = $('#filter-status').value;
     const size = $('#filter-size').value;
     const search = ($('#filter-search').value || '').toLowerCase().trim();
+    const db = $('#filter-db').value;
 
-    filteredOrgs = DATA.orgs.filter(o => {
+    const matchOrg = (o) => {
       if (status && o.subscription_status !== status) return false;
       if (size && o.company_size !== size) return false;
       if (search && !(o.organization_name || '').toLowerCase().includes(search)) return false;
       return true;
-    });
+    };
 
-    $('#filter-count').textContent = `Showing ${filteredOrgs.length} of ${DATA.orgs.length} orgs`;
+    filteredOrgs = (db === 'mt') ? [] : DATA.orgs.filter(matchOrg);
+    filteredMtOrgs = (db === 'yellowstone') ? [] : mtOrgs.filter(matchOrg);
+
+    const totalOrgs = DATA.orgs.length + mtOrgs.length;
+    const showing = filteredOrgs.length + filteredMtOrgs.length;
+    $('#filter-count').textContent = `Showing ${showing} of ${totalOrgs} orgs`;
   }
 
   // ---------------------------------------------------------------------------
@@ -196,7 +204,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Tab 1: Indicators
+  // Tab 1: Indicators â Yellowstone
   // ---------------------------------------------------------------------------
   function renderIndicators() {
     const pre = filteredOrgs.filter(o => o.is_pre_launch);
@@ -375,9 +383,13 @@
     return `<div class="pct-table"><h3>${title}</h3><table><thead><tr><th>Organization</th><th style="text-align:right">Value</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
 
+  // ---------------------------------------------------------------------------
+  // Tab 2: Details
+  // ---------------------------------------------------------------------------
   const DETAIL_COLS = [
     { key: 'organization_id', label: 'ID', type: 'num' },
     { key: 'organization_name', label: 'Organization', type: 'str' },
+    { key: '_source', label: 'Source', type: 'source' },
     { key: 'subscription_status', label: 'Status', type: 'status' },
     { key: 'company_size', label: 'Size', type: 'str' },
     { key: 'organization_created_at', label: 'Created', type: 'date' },
@@ -446,8 +458,14 @@
     });
   }
 
+  function getDetailRows() {
+    const ysRows = filteredOrgs.map(o => ({ ...o, _source: 'Yellowstone' }));
+    const mtRows = filteredMtOrgs.map(o => ({ ...o, _source: 'Multi-Tenant' }));
+    return [...ysRows, ...mtRows];
+  }
+
   function renderDetailsBody() {
-    let rows = [...filteredOrgs];
+    let rows = getDetailRows();
 
     const search = ($('#table-search').value || '').toLowerCase().trim();
     if (search) {
@@ -501,6 +519,10 @@
         if (val === 'initial_prepayment_collected') return '<span class="status-pill prepay">prepaid</span>';
         if (val === 'awaiting_initial_prepayment') return '<span class="status-pill prepay" style="opacity:.6">awaiting prepay</span>';
         return `<span class="status-pill inactive">${val}</span>`;
+      case 'source':
+        return val === 'Yellowstone'
+          ? '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#EBF8FF;color:#2B6CB0;">Yellowstone</span>'
+          : '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#F0FFF4;color:#276749;">Multi-Tenant</span>';
       default: return String(val);
     }
   }
@@ -515,12 +537,14 @@
 
   function setupExport() {
     $('#btn-export').addEventListener('click', () => {
+      const allRows = getDetailRows();
       const header = DETAIL_COLS.map(c => c.label).join(',');
-      const rows = filteredOrgs.map(o =>
+      const rows = allRows.map(o =>
         DETAIL_COLS.map(c => {
           let v = o[c.key];
           if (v == null) return '';
           if (c.type === 'date') return shortDate(v);
+          if (c.type === 'source') return v;
           if (typeof v === 'string' && v.includes(',')) return `"${v}"`;
           return v;
         }).join(',')
@@ -582,11 +606,11 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Tab: Multi-Tenant
+  // Indicators â Multi-Tenant
   // ---------------------------------------------------------------------------
   function renderMultiTenant() {
     if (!DATA || !DATA.mt) return;
-    const orgs = mtOrgs;
+    const orgs = filteredMtOrgs;
     const agg = DATA.mt.aggregations;
     const pre = orgs.filter(o => o.is_pre_launch);
     const post = orgs.filter(o => o.is_post_launch);
@@ -605,7 +629,7 @@
   }
 
   function renderMTPreLaunchKPIs(pre, agg) {
-    const launched = mtOrgs.filter(o => o.days_to_launch !== null && o.days_to_launch >= 0);
+    const launched = filteredMtOrgs.filter(o => o.days_to_launch !== null && o.days_to_launch >= 0);
     const times = launched.map(o => o.days_to_launch);
     const avgTime = times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : 0;
     const medTime = times.length ? medianCalc(times) : 0;
@@ -708,5 +732,4 @@
   }
 
   document.addEventListener('DOMContentLoaded', init);
-
-})();
+}());
