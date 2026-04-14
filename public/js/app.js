@@ -199,181 +199,241 @@
   function render() {
     if (!DATA) return;
     renderIndicators();
-    renderMultiTenant();
     renderDetails();
   }
 
   // ---------------------------------------------------------------------------
-  // Tab 1: Indicators â Yellowstone
+  // Tab 1: Indicators â unified Yellowstone + Multi-Tenant
   // ---------------------------------------------------------------------------
   function renderIndicators() {
-    const pre = filteredOrgs.filter(o => o.is_pre_launch);
-    const post = filteredOrgs.filter(o => o.is_post_launch);
-    const agg = DATA.aggregations;
+    const db = $('#filter-db').value;
+    const ysAgg = DATA.aggregations;
+    const mtAgg = DATA.mt ? DATA.mt.aggregations : null;
 
-    // Badges
-    $('#badge-pre-launch').textContent = `${pre.length} orgs`;
-    $('#badge-post-launch').textContent = `${post.length} orgs`;
-    const atRisk = post.filter(o => o.at_risk);
+    // Combined org slices (filteredOrgs/filteredMtOrgs are already blanked by applyFilters when db is set)
+    const allPre = [
+      ...filteredOrgs.filter(o => o.is_pre_launch),
+      ...filteredMtOrgs.filter(o => o.is_pre_launch),
+    ];
+    const allPost = [
+      ...filteredOrgs.filter(o => o.is_post_launch),
+      ...filteredMtOrgs.filter(o => o.is_post_launch),
+    ];
+
+    const atRisk = allPost.filter(o => o.at_risk);
+    $('#badge-pre-launch').textContent = `${allPre.length} orgs`;
+    $('#badge-post-launch').textContent = `${allPost.length} orgs`;
     $('#badge-at-risk').textContent = `${atRisk.length} at risk`;
     $('#badge-at-risk').className = `badge ${atRisk.length > 0 ? 'badge-red' : 'badge-green'}`;
 
-    renderPreLaunchKPIs(pre, agg);
-    renderPreLaunchCharts(pre, agg);
-    renderPostLaunchKPIs(post, agg);
-    renderPostLaunchCharts(post, agg);
-    renderPercentiles(agg);
+    renderPreLaunchKPIs(allPre);
+    renderPreLaunchCharts(allPre, ysAgg, mtAgg, db);
+    renderPostLaunchKPIs(allPost, ysAgg, mtAgg, db);
+    renderPostLaunchCharts(ysAgg, mtAgg, db);
+    renderPercentiles(ysAgg, mtAgg, db);
   }
 
-  function renderPreLaunchKPIs(pre, agg) {
-    const launched = filteredOrgs.filter(o => o.days_to_launch !== null && o.days_to_launch >= 0);
+  // ---------------------------------------------------------------------------
+  // Pre-Launch KPIs â computed from combined org arrays
+  // ---------------------------------------------------------------------------
+  function renderPreLaunchKPIs(allPre) {
+    const launched = allPre.filter(o => o.days_to_launch !== null && o.days_to_launch >= 0);
     const times = launched.map(o => o.days_to_launch);
     const avgTime = times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : 0;
     const medTime = times.length ? medianCalc(times) : 0;
 
-    const estBillable = pre.reduce((s, o) => s + o.estimated_billable_users, 0);
-    const estMRR = pre.reduce((s, o) => s + o.estimated_mrr, 0);
-    const estARR = pre.reduce((s, o) => s + o.estimated_arr, 0);
-
-    const aging30 = pre.filter(o => o.days_since_created >= 30).length;
-    const aging60 = pre.filter(o => o.days_since_created >= 60).length;
+    const estBillable = allPre.reduce((s, o) => s + (o.estimated_billable_users || 0), 0);
+    const estMRR = allPre.reduce((s, o) => s + (o.estimated_mrr || 0), 0);
+    const estARR = allPre.reduce((s, o) => s + (o.estimated_arr || 0), 0);
+    const aging30 = allPre.filter(o => o.days_since_created >= 30).length;
+    const aging60 = allPre.filter(o => o.days_since_created >= 60).length;
 
     $('#pre-launch-kpis').innerHTML = kpiCards([
       { label: 'Avg Time to Launch', value: `${avgTime}d`, sub: `Median: ${medTime}d`, icon: '' },
-      { label: 'Pre-Launch Orgs', value: fmt(pre.length), sub: `${aging30} aging 30d+`, icon: '' },
+      { label: 'Pre-Launch Orgs', value: fmt(allPre.length), sub: `${aging30} aging 30d+`, icon: '' },
       { label: 'Aging 60+ Days', value: fmt(aging60), cls: aging60 > 0 ? 'warning' : '', icon: '' },
-      { label: 'Est. Billable Users', value: fmt(estBillable), sub: `Avg ${fmt(Math.round(estBillable / (pre.length || 1)))} per org`, icon: '' },
+      { label: 'Est. Billable Users', value: fmt(estBillable), sub: `Avg ${fmt(Math.round(estBillable / (allPre.length || 1)))} per org`, icon: '' },
       { label: 'Est. MRR', value: fmtDollar(estMRR), icon: '' },
       { label: 'Est. ARR', value: fmtDollar(estARR), icon: '' },
     ]);
   }
 
-  function renderPreLaunchCharts(pre, agg) {
-    const dist = agg.pre_launch.time_to_launch.distribution;
+  // ---------------------------------------------------------------------------
+  // Pre-Launch Charts â bucket-merged agg data
+  // ---------------------------------------------------------------------------
+  function renderPreLaunchCharts(allPre, ysAgg, mtAgg, db) {
+    const showYS = db !== 'mt';
+    const showMT = db !== 'yellowstone' && !!mtAgg;
+
+    // Time to launch distribution
+    const combinedDist = mergeBuckets(
+      showYS ? ysAgg.pre_launch.time_to_launch.distribution : [],
+      showMT ? mtAgg.pre_launch.time_to_launch.distribution : []
+    );
     makeChart('chart-launch-distribution', 'bar', {
-      labels: dist.map(d => d.label),
-      datasets: [{
-        label: 'Orgs',
-        data: dist.map(d => d.count),
-        backgroundColor: [COLORS.blue, COLORS.green, COLORS.purple, COLORS.yellow, COLORS.red],
-        borderRadius: 6,
-      }]
+      labels: combinedDist.map(d => d.label),
+      datasets: [{ label: 'Orgs', data: combinedDist.map(d => d.count), backgroundColor: [COLORS.blue, COLORS.green, COLORS.purple, COLORS.yellow, COLORS.red], borderRadius: 6 }]
     }, { plugins: { legend: { display: false } } });
 
-    const aging = agg.pre_launch.aging;
+    // Aging
+    const combinedAging = mergeBuckets(
+      showYS ? ysAgg.pre_launch.aging : [],
+      showMT ? mtAgg.pre_launch.aging : []
+    );
     makeChart('chart-aging', 'bar', {
-      labels: aging.map(a => a.label),
-      datasets: [{
-        label: 'Count',
-        data: aging.map(a => a.count),
-        backgroundColor: [COLORS.yellow, COLORS.orange, COLORS.red, '#C53030'],
-        borderRadius: 6,
-      }]
+      labels: combinedAging.map(a => a.label),
+      datasets: [{ label: 'Count', data: combinedAging.map(a => a.count), backgroundColor: [COLORS.yellow, COLORS.orange, COLORS.red, '#C53030'], borderRadius: 6 }]
     }, { indexAxis: 'y', plugins: { legend: { display: false } } });
 
-    const trend = agg.pre_launch.launch_trend;
-    if (trend.length) {
-      makeChart('chart-launch-trend', 'line', {
-        labels: trend.map(t => t.month),
-        datasets: [
-          { label: 'Avg Days', data: trend.map(t => t.avg), borderColor: COLORS.blue, backgroundColor: COLORS.blueLight, fill: true, tension: 0.3 },
-          { label: 'Median Days', data: trend.map(t => t.median), borderColor: COLORS.purple, borderDash: [5, 3], tension: 0.3 }
-        ]
-      });
+    // Launch trend â one series per database so they can be compared
+    const ysTrend = showYS ? ysAgg.pre_launch.launch_trend : [];
+    const mtTrend = showMT ? mtAgg.pre_launch.launch_trend : [];
+    if (ysTrend.length || mtTrend.length) {
+      const allMonths = [...new Set([...ysTrend.map(t => t.month), ...mtTrend.map(t => t.month)])].sort();
+      const datasets = [];
+      if (ysTrend.length) {
+        datasets.push({
+          label: 'Yellowstone',
+          data: allMonths.map(m => { const pt = ysTrend.find(t => t.month === m); return pt ? pt.avg : null; }),
+          borderColor: COLORS.blue, backgroundColor: COLORS.blueLight, fill: false, tension: 0.3, spanGaps: true,
+        });
+      }
+      if (mtTrend.length) {
+        datasets.push({
+          label: 'Multi-Tenant',
+          data: allMonths.map(m => { const pt = mtTrend.find(t => t.month === m); return pt ? pt.avg : null; }),
+          borderColor: COLORS.green, borderDash: [4, 2], fill: false, tension: 0.3, spanGaps: true,
+        });
+      }
+      makeChart('chart-launch-trend', 'line', { labels: allMonths, datasets });
     }
 
-    const rev = agg.pre_launch.estimated_revenue;
+    // Estimated revenue â computed from org array so it matches filters
+    const totalMRR = allPre.reduce((s, o) => s + (o.estimated_mrr || 0), 0);
+    const totalARR = allPre.reduce((s, o) => s + (o.estimated_arr || 0), 0);
+    const avgMRR = allPre.length ? Math.round(totalMRR / allPre.length) : 0;
+    const medianMRR = medianCalc(allPre.map(o => o.estimated_mrr || 0));
     makeChart('chart-pre-revenue', 'bar', {
       labels: ['Total MRR', 'Avg MRR', 'Median MRR', 'Total ARR'],
-      datasets: [{
-        label: 'USD',
-        data: [rev.total_mrr, rev.avg_mrr, rev.median_mrr, rev.total_arr],
-        backgroundColor: [COLORS.blue, COLORS.purple, COLORS.orange, COLORS.green],
-        borderRadius: 6,
-      }]
+      datasets: [{ label: 'USD', data: [totalMRR, avgMRR, medianMRR, totalARR], backgroundColor: [COLORS.blue, COLORS.purple, COLORS.orange, COLORS.green], borderRadius: 6 }]
     }, { plugins: { legend: { display: false } } });
   }
 
-  function renderPostLaunchKPIs(post, agg) {
-    const pl = agg.post_launch;
-    const atRisk = post.filter(o => o.at_risk);
-    const totalBonuses30d = post.reduce((s, o) => s + o.total_bonuses_paid_30d, 0);
-    const paidOrgs30d = post.filter(o => o.total_bonuses_paid_30d > 0).length;
+  // ---------------------------------------------------------------------------
+  // Post-Launch KPIs â combined org arrays + summed agg values
+  // ---------------------------------------------------------------------------
+  function renderPostLaunchKPIs(allPost, ysAgg, mtAgg, db) {
+    const showYS = db !== 'mt';
+    const showMT = db !== 'yellowstone' && !!mtAgg;
+    const ysPL = ysAgg.post_launch;
+    const mtPL = mtAgg ? mtAgg.post_launch : null;
+
+    const atRisk = allPost.filter(o => o.at_risk);
+    const totalBonuses30d = allPost.reduce((s, o) => s + (o.total_bonuses_paid_30d || 0), 0);
+    const paidOrgs30d = allPost.filter(o => (o.total_bonuses_paid_30d || 0) > 0).length;
+
+    // Billable users â sum agg values
+    const totalActual = (showYS ? ysPL.billable_users.total_actual : 0) + (showMT && mtPL ? mtPL.billable_users.total_actual : 0);
+    const totalGap = (showYS ? ysPL.billable_users.gap : 0) + (showMT && mtPL ? mtPL.billable_users.gap : 0);
+    const ratio = (totalActual + totalGap) > 0 ? (totalActual / (totalActual + totalGap) * 100) : 0;
+
+    // Missing invites â sum
+    const missingTotal = (showYS ? ysPL.missing_invites.total : 0) + (showMT && mtPL ? mtPL.missing_invites.total : 0);
+    const missingOrgs = (showYS ? ysPL.missing_invites.orgs_with_missing : 0) + (showMT && mtPL ? mtPL.missing_invites.orgs_with_missing : 0);
+
+    // Bonus activity â sum
+    const bonusPaid = (showYS ? ysPL.bonus_activity.paid_30d : 0) + (showMT && mtPL ? mtPL.bonus_activity.paid_30d : 0);
+    const bonusNotPaid = (showYS ? ysPL.bonus_activity.not_paid_30d : 0) + (showMT && mtPL ? mtPL.bonus_activity.not_paid_30d : 0);
+
+    // Avg bonus per person â compute from org data
+    const totalPaidPeople30d = allPost.reduce((s, o) => s + (o.unique_paid_people_30d || 0), 0);
+    const avgBonusPerPerson30d = totalPaidPeople30d > 0 ? totalBonuses30d / totalPaidPeople30d : 0;
 
     $('#post-launch-kpis').innerHTML = kpiCards([
-      { label: 'Post-Launch Orgs', value: fmt(post.length), icon: '' },
-      { label: 'At Risk', value: fmt(atRisk.length), cls: atRisk.length > 0 ? 'danger' : 'success', sub: fmtPct(post.length ? (atRisk.length / post.length * 100) : 0) + ' of post-launch', icon: '' },
-      { label: 'Billable Users (Actual)', value: fmt(pl.billable_users.total_actual), sub: `Gap: ${fmt(pl.billable_users.gap)}`, icon: '' },
-      { label: 'Billable Ratio', value: fmtPct(pl.billable_users.ratio), icon: '' },
-      { label: 'Missing Invites', value: fmt(pl.missing_invites.total), sub: `${pl.missing_invites.orgs_with_missing} orgs affected`, cls: pl.missing_invites.total > 0 ? 'warning' : '', icon: '' },
+      { label: 'Post-Launch Orgs', value: fmt(allPost.length), icon: '' },
+      { label: 'At Risk', value: fmt(atRisk.length), cls: atRisk.length > 0 ? 'danger' : 'success', sub: fmtPct(allPost.length ? (atRisk.length / allPost.length * 100) : 0) + ' of post-launch', icon: '' },
+      { label: 'Billable Users (Actual)', value: fmt(totalActual), sub: `Gap: ${fmt(totalGap)}`, icon: '' },
+      { label: 'Billable Ratio', value: fmtPct(ratio), icon: '' },
+      { label: 'Missing Invites', value: fmt(missingTotal), sub: `${missingOrgs} orgs affected`, cls: missingTotal > 0 ? 'warning' : '', icon: '' },
       { label: 'Bonuses Paid (30d)', value: fmtDollar(totalBonuses30d), sub: `${paidOrgs30d} orgs paying`, icon: '' },
-      { label: 'Avg Bonus/Person (30d)', value: fmtDollar(pl.bonus_performance.last_30d.avg_per_user), icon: '' },
-      { label: 'Orgs Paying Bonuses (30d)', value: fmt(pl.bonus_activity.paid_30d), sub: `${pl.bonus_activity.not_paid_30d} not paying`, cls: pl.bonus_activity.not_paid_30d > 0 ? 'warning' : '', icon: '' },
+      { label: 'Avg Bonus/Person (30d)', value: fmtDollar(avgBonusPerPerson30d), icon: '' },
+      { label: 'Orgs Paying Bonuses (30d)', value: fmt(bonusPaid), sub: `${bonusNotPaid} not paying`, cls: bonusNotPaid > 0 ? 'warning' : '', icon: '' },
     ]);
   }
 
-  function renderPostLaunchCharts(post, agg) {
-    const pl = agg.post_launch;
+  // ---------------------------------------------------------------------------
+  // Post-Launch Charts â summed agg values
+  // ---------------------------------------------------------------------------
+  function renderPostLaunchCharts(ysAgg, mtAgg, db) {
+    const showYS = db !== 'mt';
+    const showMT = db !== 'yellowstone' && !!mtAgg;
+    const ysPL = ysAgg.post_launch;
+    const mtPL = mtAgg ? mtAgg.post_launch : null;
 
+    const actualBilled = (showYS ? ysPL.billable_users.total_actual : 0) + (showMT && mtPL ? mtPL.billable_users.total_actual : 0);
+    const gap = (showYS ? ysPL.billable_users.gap : 0) + (showMT && mtPL ? mtPL.billable_users.gap : 0);
     makeChart('chart-billable-gap', 'doughnut', {
       labels: ['Actual Billed', 'Gap (Potential)'],
-      datasets: [{
-        data: [pl.billable_users.total_actual, pl.billable_users.gap],
-        backgroundColor: [COLORS.green, COLORS.redLight],
-        borderWidth: 0,
-      }]
+      datasets: [{ data: [actualBilled, gap], backgroundColor: [COLORS.green, COLORS.redLight], borderWidth: 0 }]
     }, { cutout: '65%' });
 
+    const bonusPaid = (showYS ? ysPL.bonus_activity.paid_30d : 0) + (showMT && mtPL ? mtPL.bonus_activity.paid_30d : 0);
+    const bonusNotPaid = (showYS ? ysPL.bonus_activity.not_paid_30d : 0) + (showMT && mtPL ? mtPL.bonus_activity.not_paid_30d : 0);
     makeChart('chart-bonus-activity', 'doughnut', {
       labels: ['Paid Bonuses', 'No Bonuses'],
-      datasets: [{
-        data: [pl.bonus_activity.paid_30d, pl.bonus_activity.not_paid_30d],
-        backgroundColor: [COLORS.green, COLORS.redLight],
-        borderWidth: 0,
-      }]
+      datasets: [{ data: [bonusPaid, bonusNotPaid], backgroundColor: [COLORS.green, COLORS.redLight], borderWidth: 0 }]
     }, { cutout: '65%' });
 
+    const incentiveActive = (showYS ? ysPL.incentive_activity.active_30d : 0) + (showMT && mtPL ? mtPL.incentive_activity.active_30d : 0);
+    const incentiveInactive = (showYS ? ysPL.incentive_activity.inactive_30d : 0) + (showMT && mtPL ? mtPL.incentive_activity.inactive_30d : 0);
     makeChart('chart-incentive-activity', 'doughnut', {
       labels: ['Active', 'Inactive'],
-      datasets: [{
-        data: [pl.incentive_activity.active_30d, pl.incentive_activity.inactive_30d],
-        backgroundColor: [COLORS.blue, COLORS.yellowLight],
-        borderWidth: 0,
-      }]
+      datasets: [{ data: [incentiveActive, incentiveInactive], backgroundColor: [COLORS.blue, COLORS.yellowLight], borderWidth: 0 }]
     }, { cutout: '65%' });
 
-    const rf = pl.at_risk.by_flag;
+    const zero = { bonuses_below_1: 0, low_earning_staff: 0, no_bonuses_30d: 0, no_incentives_30d: 0, missing_accounts: 0 };
+    const ysRF = showYS ? ysPL.at_risk.by_flag : zero;
+    const mtRF = showMT && mtPL ? mtPL.at_risk.by_flag : zero;
     makeChart('chart-red-flags', 'bar', {
       labels: ['Bonus <$1/hr', '<50% Earning', 'No Bonus 30d', 'No Incentive 30d', 'Missing Accts'],
-      datasets: [{
-        label: 'Orgs',
-        data: [rf.bonuses_below_1, rf.low_earning_staff, rf.no_bonuses_30d, rf.no_incentives_30d, rf.missing_accounts],
-        backgroundColor: [COLORS.red, COLORS.orange, COLORS.yellow, COLORS.purple, COLORS.blue],
-        borderRadius: 6,
-      }]
+      datasets: [{ label: 'Orgs', data: [
+        ysRF.bonuses_below_1 + mtRF.bonuses_below_1,
+        ysRF.low_earning_staff + mtRF.low_earning_staff,
+        ysRF.no_bonuses_30d + mtRF.no_bonuses_30d,
+        ysRF.no_incentives_30d + mtRF.no_incentives_30d,
+        ysRF.missing_accounts + mtRF.missing_accounts,
+      ], backgroundColor: [COLORS.red, COLORS.orange, COLORS.yellow, COLORS.purple, COLORS.blue], borderRadius: 6 }]
     }, { indexAxis: 'y', plugins: { legend: { display: false } } });
   }
 
-  function renderPercentiles(agg) {
-    const pcts = agg.post_launch.percentiles;
+  // ---------------------------------------------------------------------------
+  // Percentiles â merged + re-sorted lists
+  // ---------------------------------------------------------------------------
+  function renderPercentiles(ysAgg, mtAgg, db) {
+    const showYS = db !== 'mt';
+    const showMT = db !== 'yellowstone' && !!mtAgg;
     const el = $('#percentile-tables');
     el.innerHTML = '';
 
-    if (pcts.top_bonus_orgs.length) {
-      el.innerHTML += pctTable('Top 10% - Bonus per Person', pcts.top_bonus_orgs, '$');
-    }
-    if (pcts.bottom_bonus_orgs.length) {
-      el.innerHTML += pctTable('Bottom 10% - Bonus per Person', pcts.bottom_bonus_orgs, '$');
-    }
-    if (pcts.fastest_launch.length) {
-      el.innerHTML += pctTable('Top 10% - Fastest Launch', pcts.fastest_launch, 'd');
-    }
-    if (pcts.slowest_launch.length) {
-      el.innerHTML += pctTable('Bottom 10% - Slowest Launch', pcts.slowest_launch, 'd');
-    }
-    if (pcts.top_missing_invites && pcts.top_missing_invites.length) {
-      el.innerHTML += pctTable('Worst - Missing Invites', pcts.top_missing_invites, '');
-    }
+    const ysPcts = ysAgg.post_launch.percentiles;
+    const mtPcts = mtAgg ? mtAgg.post_launch.percentiles : {};
+
+    const combine = (ysItems, mtItems) => [
+      ...(showYS && ysItems ? ysItems : []),
+      ...(showMT && mtItems ? mtItems : []),
+    ];
+
+    const topBonus = combine(ysPcts.top_bonus_orgs, mtPcts.top_bonus_orgs).sort((a, b) => b.value - a.value).slice(0, 10);
+    const bottomBonus = combine(ysPcts.bottom_bonus_orgs, mtPcts.bottom_bonus_orgs).sort((a, b) => a.value - b.value).slice(0, 10);
+    const fastest = combine(ysPcts.fastest_launch, mtPcts.fastest_launch).sort((a, b) => a.value - b.value).slice(0, 10);
+    const slowest = combine(ysPcts.slowest_launch, mtPcts.slowest_launch).sort((a, b) => b.value - a.value).slice(0, 10);
+    const topMissing = combine(ysPcts.top_missing_invites, mtPcts.top_missing_invites).sort((a, b) => b.value - a.value).slice(0, 10);
+
+    if (topBonus.length) el.innerHTML += pctTable('Top 10% - Bonus per Person', topBonus, '$');
+    if (bottomBonus.length) el.innerHTML += pctTable('Bottom 10% - Bonus per Person', bottomBonus, '$');
+    if (fastest.length) el.innerHTML += pctTable('Top 10% - Fastest Launch', fastest, 'd');
+    if (slowest.length) el.innerHTML += pctTable('Bottom 10% - Slowest Launch', slowest, 'd');
+    if (topMissing.length) el.innerHTML += pctTable('Worst - Missing Invites', topMissing, '');
   }
 
   function pctTable(title, items, unit) {
@@ -381,6 +441,21 @@
       `<tr><td>${i.org}</td><td style="text-align:right;font-weight:600;">${unit === '$' ? fmtDollar(i.value) : fmt(i.value)}${unit === 'd' ? ' days' : ''}</td></tr>`
     ).join('');
     return `<div class="pct-table"><h3>${title}</h3><table><thead><tr><th>Organization</th><th style="text-align:right">Value</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+
+  // Merge two bucket arrays [{label, count}] by label, preserving order
+  function mergeBuckets(arr1, arr2) {
+    const map = {};
+    const order = [];
+    (arr1 || []).forEach(d => {
+      if (!map[d.label]) { map[d.label] = 0; order.push(d.label); }
+      map[d.label] += d.count;
+    });
+    (arr2 || []).forEach(d => {
+      if (!map[d.label]) { map[d.label] = 0; order.push(d.label); }
+      map[d.label] += d.count;
+    });
+    return order.map(label => ({ label, count: map[label] }));
   }
 
   // ---------------------------------------------------------------------------
@@ -603,132 +678,6 @@
     const s = [...arr].sort((a, b) => a - b);
     const mid = Math.floor(s.length / 2);
     return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Indicators â Multi-Tenant
-  // ---------------------------------------------------------------------------
-  function renderMultiTenant() {
-    if (!DATA || !DATA.mt) return;
-    const orgs = filteredMtOrgs;
-    const agg = DATA.mt.aggregations;
-    const pre = orgs.filter(o => o.is_pre_launch);
-    const post = orgs.filter(o => o.is_post_launch);
-
-    $('#mt-badge-pre-launch').textContent = `${pre.length} orgs`;
-    $('#mt-badge-post-launch').textContent = `${post.length} orgs`;
-    const atRisk = post.filter(o => o.at_risk);
-    $('#mt-badge-at-risk').textContent = `${atRisk.length} at risk`;
-    $('#mt-badge-at-risk').className = `badge ${atRisk.length > 0 ? 'badge-red' : 'badge-green'}`;
-
-    renderMTPreLaunchKPIs(pre, agg);
-    renderMTPreLaunchCharts(agg);
-    renderMTPostLaunchKPIs(post, agg);
-    renderMTPostLaunchCharts(agg);
-    renderMTPercentiles(agg);
-  }
-
-  function renderMTPreLaunchKPIs(pre, agg) {
-    const launched = filteredMtOrgs.filter(o => o.days_to_launch !== null && o.days_to_launch >= 0);
-    const times = launched.map(o => o.days_to_launch);
-    const avgTime = times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : 0;
-    const medTime = times.length ? medianCalc(times) : 0;
-    const estBillable = pre.reduce((s, o) => s + o.estimated_billable_users, 0);
-    const estMRR = pre.reduce((s, o) => s + o.estimated_mrr, 0);
-    const estARR = pre.reduce((s, o) => s + o.estimated_arr, 0);
-    const aging30 = pre.filter(o => o.days_since_created >= 30).length;
-    const aging60 = pre.filter(o => o.days_since_created >= 60).length;
-    $('#mt-pre-launch-kpis').innerHTML = kpiCards([
-      { label: 'Avg Time to Launch', value: `${avgTime}d`, sub: `Median: ${medTime}d`, icon: '' },
-      { label: 'Pre-Launch Orgs', value: fmt(pre.length), sub: `${aging30} aging 30d+`, icon: '' },
-      { label: 'Aging 60+ Days', value: fmt(aging60), cls: aging60 > 0 ? 'warning' : '', icon: '' },
-      { label: 'Est. Billable Users', value: fmt(estBillable), sub: `Avg ${fmt(Math.round(estBillable / (pre.length || 1)))} per org`, icon: '' },
-      { label: 'Est. MRR', value: fmtDollar(estMRR), icon: '' },
-      { label: 'Est. ARR', value: fmtDollar(estARR), icon: '' },
-    ]);
-  }
-
-  function renderMTPreLaunchCharts(agg) {
-    const dist = agg.pre_launch.time_to_launch.distribution;
-    makeChart('mt-chart-launch-distribution', 'bar', {
-      labels: dist.map(d => d.label),
-      datasets: [{ label: 'Orgs', data: dist.map(d => d.count), backgroundColor: [COLORS.blue, COLORS.green, COLORS.purple, COLORS.yellow, COLORS.red], borderRadius: 6 }]
-    }, { plugins: { legend: { display: false } } });
-
-    const aging = agg.pre_launch.aging;
-    makeChart('mt-chart-aging', 'bar', {
-      labels: aging.map(a => a.label),
-      datasets: [{ label: 'Count', data: aging.map(a => a.count), backgroundColor: [COLORS.yellow, COLORS.orange, COLORS.red, '#C53030'], borderRadius: 6 }]
-    }, { indexAxis: 'y', plugins: { legend: { display: false } } });
-
-    const trend = agg.pre_launch.launch_trend;
-    if (trend.length) {
-      makeChart('mt-chart-launch-trend', 'line', {
-        labels: trend.map(t => t.month),
-        datasets: [
-          { label: 'Avg Days', data: trend.map(t => t.avg), borderColor: COLORS.blue, backgroundColor: COLORS.blueLight, fill: true, tension: 0.3 },
-          { label: 'Median Days', data: trend.map(t => t.median), borderColor: COLORS.purple, borderDash: [5, 3], tension: 0.3 }
-        ]
-      });
-    }
-
-    const rev = agg.pre_launch.estimated_revenue;
-    makeChart('mt-chart-pre-revenue', 'bar', {
-      labels: ['Total MRR', 'Avg MRR', 'Median MRR', 'Total ARR'],
-      datasets: [{ label: 'USD', data: [rev.total_mrr, rev.avg_mrr, rev.median_mrr, rev.total_arr], backgroundColor: [COLORS.blue, COLORS.purple, COLORS.orange, COLORS.green], borderRadius: 6 }]
-    }, { plugins: { legend: { display: false } } });
-  }
-
-  function renderMTPostLaunchKPIs(post, agg) {
-    const pl = agg.post_launch;
-    const atRisk = post.filter(o => o.at_risk);
-    const totalBonuses30d = post.reduce((s, o) => s + o.total_bonuses_paid_30d, 0);
-    const paidOrgs30d = post.filter(o => o.total_bonuses_paid_30d > 0).length;
-    $('#mt-post-launch-kpis').innerHTML = kpiCards([
-      { label: 'Post-Launch Orgs', value: fmt(post.length), icon: '' },
-      { label: 'At Risk', value: fmt(atRisk.length), cls: atRisk.length > 0 ? 'danger' : 'success', sub: fmtPct(post.length ? (atRisk.length / post.length * 100) : 0) + ' of post-launch', icon: '' },
-      { label: 'Billable Users (Actual)', value: fmt(pl.billable_users.total_actual), sub: `Gap: ${fmt(pl.billable_users.gap)}`, icon: '' },
-      { label: 'Billable Ratio', value: fmtPct(pl.billable_users.ratio), icon: '' },
-      { label: 'Missing Invites', value: fmt(pl.missing_invites.total), sub: `${pl.missing_invites.orgs_with_missing} orgs affected`, cls: pl.missing_invites.total > 0 ? 'warning' : '', icon: '' },
-      { label: 'Bonuses Paid (30d)', value: fmtDollar(totalBonuses30d), sub: `${paidOrgs30d} orgs paying`, icon: '' },
-      { label: 'Avg Bonus/Person (30d)', value: fmtDollar(pl.bonus_performance.last_30d.avg_per_user), icon: '' },
-      { label: 'Orgs Paying Bonuses (30d)', value: fmt(pl.bonus_activity.paid_30d), sub: `${pl.bonus_activity.not_paid_30d} not paying`, cls: pl.bonus_activity.not_paid_30d > 0 ? 'warning' : '', icon: '' },
-    ]);
-  }
-
-  function renderMTPostLaunchCharts(agg) {
-    const pl = agg.post_launch;
-    makeChart('mt-chart-billable-gap', 'doughnut', {
-      labels: ['Actual Billed', 'Gap (Potential)'],
-      datasets: [{ data: [pl.billable_users.total_actual, pl.billable_users.gap], backgroundColor: [COLORS.green, COLORS.redLight], borderWidth: 0 }]
-    }, { cutout: '65%' });
-
-    makeChart('mt-chart-bonus-activity', 'doughnut', {
-      labels: ['Paid Bonuses', 'No Bonuses'],
-      datasets: [{ data: [pl.bonus_activity.paid_30d, pl.bonus_activity.not_paid_30d], backgroundColor: [COLORS.green, COLORS.redLight], borderWidth: 0 }]
-    }, { cutout: '65%' });
-
-    makeChart('mt-chart-incentive-activity', 'doughnut', {
-      labels: ['Active', 'Inactive'],
-      datasets: [{ data: [pl.incentive_activity.active_30d, pl.incentive_activity.inactive_30d], backgroundColor: [COLORS.blue, COLORS.yellowLight], borderWidth: 0 }]
-    }, { cutout: '65%' });
-
-    const rf = pl.at_risk.by_flag;
-    makeChart('mt-chart-red-flags', 'bar', {
-      labels: ['Bonus <$1/hr', '<50% Earning', 'No Bonus 30d', 'No Incentive 30d', 'Missing Accts'],
-      datasets: [{ label: 'Orgs', data: [rf.bonuses_below_1, rf.low_earning_staff, rf.no_bonuses_30d, rf.no_incentives_30d, rf.missing_accounts], backgroundColor: [COLORS.red, COLORS.orange, COLORS.yellow, COLORS.purple, COLORS.blue], borderRadius: 6 }]
-    }, { indexAxis: 'y', plugins: { legend: { display: false } } });
-  }
-
-  function renderMTPercentiles(agg) {
-    const pcts = agg.post_launch.percentiles;
-    const el = $('#mt-percentile-tables');
-    el.innerHTML = '';
-    if (pcts.top_bonus_orgs.length) el.innerHTML += pctTable('Top 10% - Bonus per Person', pcts.top_bonus_orgs, '$');
-    if (pcts.bottom_bonus_orgs.length) el.innerHTML += pctTable('Bottom 10% - Bonus per Person', pcts.bottom_bonus_orgs, '$');
-    if (pcts.fastest_launch.length) el.innerHTML += pctTable('Top 10% - Fastest Launch', pcts.fastest_launch, 'd');
-    if (pcts.slowest_launch.length) el.innerHTML += pctTable('Bottom 10% - Slowest Launch', pcts.slowest_launch, 'd');
-    if (pcts.top_missing_invites && pcts.top_missing_invites.length) el.innerHTML += pctTable('Worst - Missing Invites', pcts.top_missing_invites, '');
   }
 
   document.addEventListener('DOMContentLoaded', init);
