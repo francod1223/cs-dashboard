@@ -12,7 +12,7 @@
 <!-- Loading overlay -->
 <div class="loading-overlay" id="loading">
   <div class="spinner"></div>
-  <div class="loading-text">Loading dashboard dataâ¦</div>
+  <div class="loading-text">Loading dashboard data&#8230;</div>
 </div>
 
 <!-- Top bar -->
@@ -24,7 +24,7 @@
   <span class="topbar-title">Customer Success Dashboard</span>
   <span class="topbar-spacer"></span>
   <div class="topbar-user" id="user-info"></div>
-  <button class="btn-refresh" id="btn-refresh" title="Refresh data">â» Refresh</button>
+  <button class="btn-refresh" id="btn-refresh" title="Refresh data">&#x27F3; Refresh</button>
   <a href="/auth/logout" class="btn-logout">Sign out</a>
 </header>
 
@@ -34,15 +34,20 @@
   <select id="filter-status"><option value="">All Statuses</option></select>
   <label>Size</label>
   <select id="filter-size"><option value="">All Sizes</option></select>
+  <label>Database</label>
+  <select id="filter-db">
+    <option value="">All</option>
+    <option value="yellowstone">Yellowstone</option>
+    <option value="mt">Multi-Tenant</option>
+  </select>
   <label>Search</label>
-  <input type="text" id="filter-search" class="search-input" placeholder="Search org nameâ¦">
+  <input type="text" id="filter-search" class="search-input" placeholder="Search org name&#8230;">
   <span class="filter-count" id="filter-count"></span>
 </div>
 
 <!-- Tabs -->
 <nav class="tab-bar">
   <button class="tab-btn active" data-tab="tab-indicators">Indicators / Graphs</button>
-  <button class="tab-btn" data-tab="tab-multi-tenant">Multi-Tenant</button>
   <button class="tab-btn" data-tab="tab-details">Details</button>
 </nav>
 
@@ -50,8 +55,9 @@
 <div class="content">
   <div class="tab-content active" id="tab-indicators">
 
+    <!-- ââ Yellowstone âââââââââââââââââââââââââââââââââââââââ -->
     <div class="section-header">
-      <h2>Pre-Launch</h2>
+      <h2>Yellowstone &#8212; Pre-Launch</h2>
       <span class="badge badge-blue" id="badge-pre-launch">0 orgs</span>
     </div>
     <div class="kpi-grid" id="pre-launch-kpis"></div>
@@ -79,7 +85,7 @@
     </div>
 
     <div class="section-header">
-      <h2>Post-Launch</h2>
+      <h2>Yellowstone &#8212; Post-Launch</h2>
       <span class="badge badge-green" id="badge-post-launch">0 orgs</span>
       <span class="badge badge-red" id="badge-at-risk">0 at risk</span>
     </div>
@@ -108,17 +114,18 @@
     </div>
 
     <div class="section-header">
-      <h2>Top &amp; Bottom Performers</h2>
+      <h2>Yellowstone &#8212; Top &amp; Bottom Performers</h2>
     </div>
     <div class="pct-grid" id="percentile-tables"></div>
 
-  </div>
+    <!-- ââ Divider âââââââââââââââââââââââââââââââââââââââââââ -->
+    <div style="margin:40px 0 32px;border-top:2px solid #E2E8F0;position:relative;">
+      <span style="position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:#F7FAFC;padding:0 16px;font-size:11px;font-weight:600;color:#A0AEC0;letter-spacing:.08em;text-transform:uppercase;">Multi-Tenant</span>
+    </div>
 
-  <!-- Tab 2: Multi-Tenant -->
-  <div class="tab-content" id="tab-multi-tenant">
-
+    <!-- ââ Multi-Tenant ââââââââââââââââââââââââââââââââââââââ -->
     <div class="section-header">
-      <h2>Pre-Launch</h2>
+      <h2>Multi-Tenant &#8212; Pre-Launch</h2>
       <span class="badge badge-blue" id="mt-badge-pre-launch">0 orgs</span>
     </div>
     <div class="kpi-grid" id="mt-pre-launch-kpis"></div>
@@ -146,7 +153,7 @@
     </div>
 
     <div class="section-header">
-      <h2>Post-Launch</h2>
+      <h2>Multi-Tenant &#8212; Post-Launch</h2>
       <span class="badge badge-green" id="mt-badge-post-launch">0 orgs</span>
       <span class="badge badge-red" id="mt-badge-at-risk">0 at risk</span>
     </div>
@@ -175,17 +182,17 @@
     </div>
 
     <div class="section-header">
-      <h2>Top &amp; Bottom Performers</h2>
+      <h2>Multi-Tenant &#8212; Top &amp; Bottom Performers</h2>
     </div>
     <div class="pct-grid" id="mt-percentile-tables"></div>
 
   </div>
 
-  <!-- Tab 3: Details -->
+  <!-- Tab 2: Details -->
   <div class="tab-content" id="tab-details">
     <div class="table-controls">
-      <input type="text" id="table-search" placeholder="Search details tableâ¦">
-      <button class="btn-export" id="btn-export">â¬ Export CSV</button>
+      <input type="text" id="table-search" placeholder="Search details table&#8230;">
+      <button class="btn-export" id="btn-export">&#x2B07; Export CSV</button>
       <span class="filter-count" id="table-count"></span>
     </div>
     <div class="details-wrap">
