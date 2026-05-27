@@ -256,7 +256,7 @@ let ttlOverrides = {};   // keyed by org_id (number)
 // Pipeline ID can be overridden via HUBSPOT_PIPELINE_ID env var.
 // Set HUBSPOT_PIPELINE_ID in Render to the correct "V2 launch" pipeline.
 // On first deploy, check server logs for "[HubSpot] Available pipelines:" to find the right ID.
-const HS_PIPELINE = process.env.HUBSPOT_PIPELINE_ID || '867839032';
+const HS_PIPELINE = process.env.HUBSPOT_PIPELINE_ID || '809855298';
 const HS_OWNER_MAP = {
   '1917156077': 'Ryan McCallion',
   '79820034': 'Alexander Skodras',
@@ -268,10 +268,10 @@ const HS_OWNER_MAP = {
 
 async function logHubSpotPipelines(apiKey) {
   try {
-    const res = await axios.get('https://api.hubapi.com/crm/v3/pipelines/deals',
+    const res = await axios.get('https://api.hubapi.com/crm/v3/pipelines/tickets',
       { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 });
     const pipelines = (res.data.results || []).map(p => `  ${p.id} = "${p.label}"`).join('\n');
-    console.log(`[HubSpot] Available pipelines (set HUBSPOT_PIPELINE_ID to the correct one):\n${pipelines}`);
+    console.log(`[HubSpot] Available ticket pipelines (set HUBSPOT_PIPELINE_ID to the correct one):\n${pipelines}`);
     console.log(`[HubSpot] Currently using pipeline: ${HS_PIPELINE}`);
   } catch (e) {
     console.warn('[HubSpot] Could not list pipelines:', e.message);
@@ -291,22 +291,22 @@ async function fetchHubSpotDeals() {
     logHubSpotPipelines(apiKey).catch(() => {});
   }
   try {
-    const [dealsRes, stagesRes] = await Promise.all([
-      axios.post('https://api.hubapi.com/crm/v3/objects/deals/search', {
-        filterGroups: [{ filters: [{ propertyName: 'pipeline', operator: 'EQ', value: HS_PIPELINE }] }],
-        properties: ['dealname', 'dealstage', 'hubspot_owner_id', 'createdate', 'number_of_implementation_employees', 'closedate'],
+    const [ticketsRes, stagesRes] = await Promise.all([
+      axios.post('https://api.hubapi.com/crm/v3/objects/tickets/search', {
+        filterGroups: [{ filters: [{ propertyName: 'hs_pipeline', operator: 'EQ', value: HS_PIPELINE }] }],
+        properties: ['subject', 'hs_pipeline_stage', 'hubspot_owner_id', 'createdate', 'hs_ticket_priority'],
         limit: 200,
       }, { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, timeout: 15000 }),
-      axios.get(`https://api.hubapi.com/crm/v3/pipelines/deals/${HS_PIPELINE}/stages`,
+      axios.get(`https://api.hubapi.com/crm/v3/pipelines/tickets/${HS_PIPELINE}/stages`,
         { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 }
       ).catch(() => ({ data: { results: [] } }))
     ]);
     const stages = {};
     (stagesRes.data.results || []).forEach(s => { stages[s.id] = s.label; });
-    console.log(`[HubSpot] Fetched ${(dealsRes.data.results || []).length} deals from pipeline ${HS_PIPELINE}, ${Object.keys(stages).length} stages`);
-    return { deals: dealsRes.data.results || [], stages };
+    console.log(`[HubSpot] Fetched ${(ticketsRes.data.results || []).length} tickets from pipeline ${HS_PIPELINE}, ${Object.keys(stages).length} stages`);
+    return { deals: ticketsRes.data.results || [], stages };
   } catch (err) {
-    console.warn('[HubSpot] Failed to fetch deals:', err.message);
+    console.warn('[HubSpot] Failed to fetch tickets:', err.message);
     return { deals: [], stages: {} };
   }
 }
@@ -327,12 +327,12 @@ function matchDealToOrg(orgName, deals) {
 
   // Pass 1: exact match after normalization
   for (const deal of deals) {
-    if (normalizeCompanyName(deal.properties.dealname) === normOrg) return deal;
+    if (normalizeCompanyName(deal.properties.subject) === normOrg) return deal;
   }
 
   // Pass 2: substring containment — one fully contains the other (both ≥5 chars)
   for (const deal of deals) {
-    const dealNorm = normalizeCompanyName(deal.properties.dealname);
+    const dealNorm = normalizeCompanyName(deal.properties.subject);
     if (dealNorm.length >= 5 && normOrg.length >= 5) {
       if (dealNorm.includes(normOrg) || normOrg.includes(dealNorm)) return deal;
     }
@@ -346,7 +346,7 @@ function matchDealToOrg(orgName, deals) {
 
   let bestMatch = null, bestScore = 0;
   for (const deal of deals) {
-    const dealNorm = normalizeCompanyName(deal.properties.dealname);
+    const dealNorm = normalizeCompanyName(deal.properties.subject);
     const dealWords = dealNorm.split(' ');
     const common4 = dealWords.filter(w => w.length >= 4 && orgWords4.has(w));
     const common5 = dealWords.filter(w => w.length >= 5 && orgWords5.has(w));
@@ -418,9 +418,8 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
       days_in_onboarding: daysInOnboarding,
       hs_owner: deal ? (HS_OWNER_MAP[deal.properties.hubspot_owner_id] || deal.properties.hubspot_owner_id || 'Unknown') : null,
       hs_deal_created: deal ? deal.properties.createdate : null,
-      hs_stage: deal ? (stages[deal.properties.dealstage] || deal.properties.dealstage) : null,
-      hs_employees: deal && deal.properties.number_of_implementation_employees
-        ? parseInt(deal.properties.number_of_implementation_employees) : null,
+      hs_stage: deal ? (stages[deal.properties.hs_pipeline_stage] || deal.properties.hs_pipeline_stage) : null,
+      hs_employees: null,
       deal_to_org_days: dealToOrgDays,
       hs_matched: !!deal,
       // Override metadata (shown in UI)
@@ -431,7 +430,7 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
       override_notes: ov.notes || null,
       // Fathom lookup: try org name first, then matched deal name (since Fathom CRM matches use HS company names)
       fathom_meetings: fathomCounts[normalizeCompanyName(org.organization_name)]
-        || (deal ? fathomCounts[normalizeCompanyName(deal.properties.dealname)] : null)
+        || (deal ? fathomCounts[normalizeCompanyName(deal.properties.subject)] : null)
         || null,
     };
   }).filter(Boolean);  // remove hidden orgs
