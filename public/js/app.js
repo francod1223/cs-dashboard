@@ -8,13 +8,20 @@
   // ---------------------------------------------------------------------------
   // State
   // ---------------------------------------------------------------------------
-  let DATA = null;            // Full API response
-  let filteredOrgs = [];      // Yellowstone orgs after filters
-  let filteredMtOrgs = [];    // Multi-Tenant orgs after filters
-  let mtOrgs = [];            // MT orgs (raw, pre-filter)
+  let DATA = null;
+  let filteredOrgs = [];
+  let filteredMtOrgs = [];
+  let mtOrgs = [];
   let sortCol = null;
   let sortAsc = true;
   let chartInstances = {};
+
+  // Time to Launch state
+  let TTL_DATA = null;
+  let ttlFiltered = [];
+  let ttlSortCol = 'days_in_onboarding';
+  let ttlSortAsc = false;
+  let ttlFiltersReady = false;
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -27,7 +34,6 @@
   const fmtDec = (n, d = 2) => n == null ? '-' : Number(n).toFixed(d);
   const shortDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
 
-  // Light-theme chart colors
   const COLORS = {
     green: '#1DA856',
     greenLight: 'rgba(29,168,86,0.15)',
@@ -44,7 +50,6 @@
     gray: '#A0AEC0',
   };
 
-  // Chart.js defaults for light theme
   Chart.defaults.color = '#718096';
   Chart.defaults.borderColor = 'rgba(226,232,240,0.7)';
   Chart.defaults.font.family = "'Inter', sans-serif";
@@ -110,7 +115,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Tabs
+  // Tabs — lazy-load TTL on first visit
   // ---------------------------------------------------------------------------
   function setupTabs() {
     $$('.tab-btn').forEach(btn => {
@@ -119,6 +124,9 @@
         $$('.tab-content').forEach(c => c.classList.remove('active'));
         btn.classList.add('active');
         $(`#${btn.dataset.tab}`).classList.add('active');
+        if (btn.dataset.tab === 'tab-ttl' && !TTL_DATA) {
+          loadTTLData();
+        }
       });
     });
   }
@@ -159,7 +167,6 @@
       sizeSelect.innerHTML += `<option value="${s}">${s}</option>`;
     });
 
-    // Attach listeners
     $('#filter-status').addEventListener('change', onFilterChange);
     $('#filter-size').addEventListener('change', onFilterChange);
     $('#filter-db').addEventListener('change', onFilterChange);
@@ -194,7 +201,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Render everything
+  // Render
   // ---------------------------------------------------------------------------
   function render() {
     if (!DATA) return;
@@ -203,14 +210,13 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Tab 1: Indicators â unified Yellowstone + Multi-Tenant
+  // Tab 1: Indicators
   // ---------------------------------------------------------------------------
   function renderIndicators() {
     const db = $('#filter-db').value;
     const ysAgg = DATA.aggregations;
     const mtAgg = DATA.mt ? DATA.mt.aggregations : null;
 
-    // Combined org slices (filteredOrgs/filteredMtOrgs are already blanked by applyFilters when db is set)
     const allPre = [
       ...filteredOrgs.filter(o => o.is_pre_launch),
       ...filteredMtOrgs.filter(o => o.is_pre_launch),
@@ -233,9 +239,6 @@
     renderPercentiles(ysAgg, mtAgg, db);
   }
 
-  // ---------------------------------------------------------------------------
-  // Pre-Launch KPIs â computed from combined org arrays
-  // ---------------------------------------------------------------------------
   function renderPreLaunchKPIs(allPre) {
     const launched = allPre.filter(o => o.days_to_launch !== null && o.days_to_launch >= 0);
     const times = launched.map(o => o.days_to_launch);
@@ -258,14 +261,10 @@
     ]);
   }
 
-  // ---------------------------------------------------------------------------
-  // Pre-Launch Charts â bucket-merged agg data
-  // ---------------------------------------------------------------------------
   function renderPreLaunchCharts(allPre, ysAgg, mtAgg, db) {
     const showYS = db !== 'mt';
     const showMT = db !== 'yellowstone' && !!mtAgg;
 
-    // Time to launch distribution
     const combinedDist = mergeBuckets(
       showYS ? ysAgg.pre_launch.time_to_launch.distribution : [],
       showMT ? mtAgg.pre_launch.time_to_launch.distribution : []
@@ -275,7 +274,6 @@
       datasets: [{ label: 'Orgs', data: combinedDist.map(d => d.count), backgroundColor: [COLORS.blue, COLORS.green, COLORS.purple, COLORS.yellow, COLORS.red], borderRadius: 6 }]
     }, { plugins: { legend: { display: false } } });
 
-    // Aging
     const combinedAging = mergeBuckets(
       showYS ? ysAgg.pre_launch.aging : [],
       showMT ? mtAgg.pre_launch.aging : []
@@ -285,7 +283,6 @@
       datasets: [{ label: 'Count', data: combinedAging.map(a => a.count), backgroundColor: [COLORS.yellow, COLORS.orange, COLORS.red, '#C53030'], borderRadius: 6 }]
     }, { indexAxis: 'y', plugins: { legend: { display: false } } });
 
-    // Launch trend â one series per database so they can be compared
     const ysTrend = showYS ? ysAgg.pre_launch.launch_trend : [];
     const mtTrend = showMT ? mtAgg.pre_launch.launch_trend : [];
     if (ysTrend.length || mtTrend.length) {
@@ -308,7 +305,6 @@
       makeChart('chart-launch-trend', 'line', { labels: allMonths, datasets });
     }
 
-    // Estimated revenue â computed from org array so it matches filters
     const totalMRR = allPre.reduce((s, o) => s + (o.estimated_mrr || 0), 0);
     const totalARR = allPre.reduce((s, o) => s + (o.estimated_arr || 0), 0);
     const avgMRR = allPre.length ? Math.round(totalMRR / allPre.length) : 0;
@@ -319,9 +315,6 @@
     }, { plugins: { legend: { display: false } } });
   }
 
-  // ---------------------------------------------------------------------------
-  // Post-Launch KPIs â combined org arrays + summed agg values
-  // ---------------------------------------------------------------------------
   function renderPostLaunchKPIs(allPost, ysAgg, mtAgg, db) {
     const showYS = db !== 'mt';
     const showMT = db !== 'yellowstone' && !!mtAgg;
@@ -332,20 +325,16 @@
     const totalBonuses30d = allPost.reduce((s, o) => s + (o.total_bonuses_paid_30d || 0), 0);
     const paidOrgs30d = allPost.filter(o => (o.total_bonuses_paid_30d || 0) > 0).length;
 
-    // Billable users â sum agg values
     const totalActual = (showYS ? ysPL.billable_users.total_actual : 0) + (showMT && mtPL ? mtPL.billable_users.total_actual : 0);
     const totalGap = (showYS ? ysPL.billable_users.gap : 0) + (showMT && mtPL ? mtPL.billable_users.gap : 0);
     const ratio = (totalActual + totalGap) > 0 ? (totalActual / (totalActual + totalGap) * 100) : 0;
 
-    // Missing invites â sum
     const missingTotal = (showYS ? ysPL.missing_invites.total : 0) + (showMT && mtPL ? mtPL.missing_invites.total : 0);
     const missingOrgs = (showYS ? ysPL.missing_invites.orgs_with_missing : 0) + (showMT && mtPL ? mtPL.missing_invites.orgs_with_missing : 0);
 
-    // Bonus activity â sum
     const bonusPaid = (showYS ? ysPL.bonus_activity.paid_30d : 0) + (showMT && mtPL ? mtPL.bonus_activity.paid_30d : 0);
     const bonusNotPaid = (showYS ? ysPL.bonus_activity.not_paid_30d : 0) + (showMT && mtPL ? mtPL.bonus_activity.not_paid_30d : 0);
 
-    // Avg bonus per person â compute from org data
     const totalPaidPeople30d = allPost.reduce((s, o) => s + (o.unique_paid_people_30d || 0), 0);
     const avgBonusPerPerson30d = totalPaidPeople30d > 0 ? totalBonuses30d / totalPaidPeople30d : 0;
 
@@ -361,9 +350,6 @@
     ]);
   }
 
-  // ---------------------------------------------------------------------------
-  // Post-Launch Charts â summed agg values
-  // ---------------------------------------------------------------------------
   function renderPostLaunchCharts(ysAgg, mtAgg, db) {
     const showYS = db !== 'mt';
     const showMT = db !== 'yellowstone' && !!mtAgg;
@@ -406,9 +392,6 @@
     }, { indexAxis: 'y', plugins: { legend: { display: false } } });
   }
 
-  // ---------------------------------------------------------------------------
-  // Percentiles â merged + re-sorted lists
-  // ---------------------------------------------------------------------------
   function renderPercentiles(ysAgg, mtAgg, db) {
     const showYS = db !== 'mt';
     const showMT = db !== 'yellowstone' && !!mtAgg;
@@ -443,7 +426,6 @@
     return `<div class="pct-table"><h3>${title}</h3><table><thead><tr><th>Organization</th><th style="text-align:right">Value</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
 
-  // Merge two bucket arrays [{label, count}] by label, preserving order
   function mergeBuckets(arr1, arr2) {
     const map = {};
     const order = [];
@@ -519,7 +501,7 @@
   function renderDetailsHeader() {
     const thead = $('#details-thead');
     thead.innerHTML = DETAIL_COLS.map(c =>
-      `<th data-col="${c.key}">${c.label}<span class="sort-arrow">${sortCol === c.key ? (sortAsc ? '\u25B2' : '\u25BC') : ''}</span></th>`
+      `<th data-col="${c.key}">${c.label}<span class="sort-arrow">${sortCol === c.key ? (sortAsc ? '▲' : '▼') : ''}</span></th>`
     ).join('');
 
     thead.querySelectorAll('th').forEach(th => {
@@ -635,20 +617,239 @@
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Tab 3: Time to Launch
+  // ---------------------------------------------------------------------------
+  async function loadTTLData() {
+    const loading = $('#ttl-loading');
+    const content = $('#ttl-content');
+    if (!loading || !content) return;
+    loading.style.display = 'flex';
+    content.style.display = 'none';
+    try {
+      const res = await fetch('/api/time-to-launch');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      TTL_DATA = await res.json();
+      loading.style.display = 'none';
+      content.style.display = 'block';
+      initTTLFilters();
+      applyTTLFilters();
+      renderTTL();
+      setupTTLRefresh();
+      setupTTLExport();
+      setupTTLTableSort();
+    } catch (err) {
+      loading.style.display = 'none';
+      content.style.display = 'block';
+      content.innerHTML = `<div style="padding:60px;text-align:center;color:#E53E3E;font-size:14px;">Failed to load: ${err.message}</div>`;
+    }
+  }
+
+  function initTTLFilters() {
+    if (!TTL_DATA || ttlFiltersReady) return;
+    ttlFiltersReady = true;
+    const ownerSel = $('#ttl-filter-owner');
+    ownerSel.innerHTML = '<option value="">All Owners</option>';
+    const owners = [...new Set(TTL_DATA.orgs.map(o => o.hs_owner).filter(Boolean))].sort();
+    owners.forEach(o => { ownerSel.innerHTML += `<option value="${o}">${o}</option>`; });
+    ownerSel.addEventListener('change', () => { applyTTLFilters(); renderTTL(); });
+    $('#ttl-filter-status').addEventListener('change', () => { applyTTLFilters(); renderTTL(); });
+    $('#ttl-filter-search').addEventListener('input', () => { applyTTLFilters(); renderTTL(); });
+  }
+
+  function applyTTLFilters() {
+    if (!TTL_DATA) return;
+    const owner = $('#ttl-filter-owner').value;
+    const status = $('#ttl-filter-status').value;
+    const search = ($('#ttl-filter-search').value || '').toLowerCase().trim();
+    ttlFiltered = TTL_DATA.orgs.filter(o => {
+      if (owner && o.hs_owner !== owner) return false;
+      if (status === 'launched' && !o.is_launched) return false;
+      if (status === 'in_onboarding' && o.is_launched) return false;
+      if (search && !(o.organization_name || '').toLowerCase().includes(search)) return false;
+      return true;
+    });
+    $('#ttl-filter-count').textContent = `${ttlFiltered.length} of ${TTL_DATA.summary.total} orgs`;
+  }
+
+  function renderTTL() {
+    if (!TTL_DATA) return;
+    const s = TTL_DATA.summary;
+    $('#ttl-badge-total').textContent = `${s.total} orgs`;
+    $('#ttl-generated').textContent = `Updated: ${new Date(TTL_DATA.generated_at).toLocaleTimeString()}`;
+    $('#ttl-kpis').innerHTML = kpiCards([
+      { label: 'Total Orgs', value: fmt(s.total) },
+      { label: 'In Onboarding', value: fmt(s.in_onboarding), sub: s.avg_days_open != null ? `${s.avg_days_open}d avg open` : null },
+      { label: 'Launched', value: fmt(s.launched) },
+      { label: '% Launched', value: s.pct_launched + '%', cls: s.pct_launched >= 50 ? 'success' : 'warning' },
+      { label: 'Avg Days to Launch', value: s.avg_days_to_launch != null ? `${s.avg_days_to_launch}d` : '-', sub: s.median_days_to_launch != null ? `Median: ${s.median_days_to_launch}d` : null },
+      { label: 'Longest Open', value: s.longest_open != null ? `${s.longest_open}d` : '-', cls: s.longest_open > 60 ? 'danger' : '' },
+    ]);
+    renderTTLCharts();
+    renderTTLTable();
+  }
+
+  function renderTTLCharts() {
+    if (!TTL_DATA) return;
+    makeChart('ttl-aging', 'bar', {
+      labels: TTL_DATA.aging_buckets.map(b => b.label),
+      datasets: [{ label: 'Orgs in Onboarding', data: TTL_DATA.aging_buckets.map(b => b.count),
+        backgroundColor: [COLORS.green, COLORS.blue, COLORS.orange, COLORS.red, '#C53030'], borderRadius: 6 }]
+    }, { indexAxis: 'y', plugins: { legend: { display: false } } });
+
+    makeChart('ttl-launch-dist', 'bar', {
+      labels: TTL_DATA.launch_dist.map(b => b.label),
+      datasets: [{ label: 'Launched Orgs', data: TTL_DATA.launch_dist.map(b => b.count),
+        backgroundColor: [COLORS.green, COLORS.blue, COLORS.orange, COLORS.red, '#C53030'], borderRadius: 6 }]
+    }, { plugins: { legend: { display: false } } });
+
+    const byOwner = TTL_DATA.by_owner;
+    makeChart('ttl-by-owner', 'bar', {
+      labels: byOwner.map(o => o.owner),
+      datasets: [
+        { label: 'In Onboarding', data: byOwner.map(o => o.in_onboarding), backgroundColor: COLORS.orange, borderRadius: 2 },
+        { label: 'Launched', data: byOwner.map(o => o.launched), backgroundColor: COLORS.green, borderRadius: 2 },
+      ]
+    }, { scales: { x: { stacked: true }, y: { stacked: true } } });
+
+    const s = TTL_DATA.summary;
+    makeChart('ttl-launch-rate', 'doughnut', {
+      labels: ['Launched', 'In Onboarding'],
+      datasets: [{ data: [s.launched, s.in_onboarding],
+        backgroundColor: [COLORS.green, COLORS.orangeLight], borderWidth: 0 }]
+    }, { cutout: '65%' });
+  }
+
+  const TTL_COLS = [
+    { key: 'organization_name', label: 'Organization', sortable: true },
+    { key: 'is_launched', label: 'Status', type: 'ttl_status', sortable: true },
+    { key: 'organization_created_at', label: 'Created', type: 'date', sortable: true },
+    { key: 'active_billing_date', label: 'Billing Start', type: 'date', sortable: true },
+    { key: 'days_to_launch', label: 'Days to Launch', type: 'num', sortable: true },
+    { key: 'days_in_onboarding', label: 'Days Open', type: 'num_heat', sortable: true },
+    { key: 'active_user_count', label: 'Active Users', type: 'num', sortable: true },
+    { key: 'hs_owner', label: 'HS Owner', sortable: true },
+    { key: 'hs_stage', label: 'HS Stage' },
+    { key: 'hs_employees', label: 'HS Employees', type: 'num', sortable: true },
+    { key: 'integrations', label: 'Integrations' },
+  ];
+
+  function setupTTLTableSort() {
+    const thead = $('#ttl-thead');
+    if (!thead) return;
+    thead.innerHTML = '<tr>' + TTL_COLS.map(c => {
+      const arrow = ttlSortCol === c.key ? (ttlSortAsc ? ' ▲' : ' ▼') : '';
+      const style = c.sortable ? 'cursor:pointer;' : '';
+      return `<th style="${style}" data-col="${c.key}">${c.label}${arrow}</th>`;
+    }).join('') + '</tr>';
+    thead.querySelectorAll('th[data-col]').forEach(th => {
+      const col = TTL_COLS.find(c => c.key === th.dataset.col);
+      if (!col || !col.sortable) return;
+      th.addEventListener('click', () => {
+        if (ttlSortCol === col.key) ttlSortAsc = !ttlSortAsc;
+        else { ttlSortCol = col.key; ttlSortAsc = col.key !== 'days_in_onboarding'; }
+        setupTTLTableSort();
+        renderTTLTable();
+      });
+    });
+  }
+
+  function renderTTLTable() {
+    let rows = [...ttlFiltered];
+    rows.sort((a, b) => {
+      let va = a[ttlSortCol], vb = b[ttlSortCol];
+      if (ttlSortCol === 'is_launched') { va = va ? 1 : 0; vb = vb ? 1 : 0; }
+      if (va == null) va = -Infinity;
+      if (vb == null) vb = -Infinity;
+      if (typeof va === 'string') va = va.toLowerCase();
+      if (typeof vb === 'string') vb = vb.toLowerCase();
+      if (va < vb) return ttlSortAsc ? -1 : 1;
+      if (va > vb) return ttlSortAsc ? 1 : -1;
+      return 0;
+    });
+    const tbody = $('#ttl-tbody');
+    tbody.innerHTML = rows.map(o => {
+      const rowCls = (!o.is_launched && o.days_in_onboarding > 60) ? 'at-risk' :
+                     (!o.is_launched && o.days_in_onboarding > 30) ? 'prepay' : '';
+      return `<tr class="${rowCls}">${TTL_COLS.map(c => `<td>${formatTTLCell(o[c.key], c.type, o)}</td>`).join('')}</tr>`;
+    }).join('');
+    $('#ttl-table-count').textContent = `${rows.length} orgs`;
+  }
+
+  function formatTTLCell(val, type, org) {
+    switch (type) {
+      case 'ttl_status':
+        return org.is_launched
+          ? '<span class="status-pill billing">Launched</span>'
+          : '<span class="status-pill inactive">In Onboarding</span>';
+      case 'date': return shortDate(val);
+      case 'num': return val != null ? fmt(val) : '<span style="color:#A0AEC0">-</span>';
+      case 'num_heat': {
+        if (val == null) return '<span style="color:#A0AEC0">-</span>';
+        const color = val > 60 ? COLORS.red : val > 30 ? COLORS.orange : COLORS.green;
+        return `<span style="font-weight:600;color:${color}">${fmt(val)}d</span>`;
+      }
+      default: return val != null ? String(val) : '<span style="color:#A0AEC0">-</span>';
+    }
+  }
+
+  function setupTTLRefresh() {
+    const btn = $('#ttl-btn-refresh');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Refreshing...';
+      try {
+        await fetch('/api/time-to-launch/refresh', { method: 'POST' });
+        TTL_DATA = null;
+        ttlFiltersReady = false;
+        await loadTTLData();
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '&#x27F3; Refresh';
+      }
+    });
+  }
+
+  function setupTTLExport() {
+    const btn = $('#ttl-btn-export');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const header = TTL_COLS.map(c => c.label).join(',');
+      const rows = ttlFiltered.map(o =>
+        TTL_COLS.map(c => {
+          if (c.key === 'is_launched') return o.is_launched ? 'Launched' : 'In Onboarding';
+          let v = o[c.key];
+          if (v == null) return '';
+          if (c.type === 'date') return shortDate(v);
+          if (typeof v === 'string' && v.includes(',')) return `"${v}"`;
+          return v;
+        }).join(',')
+      );
+      const csv = [header, ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `time-to-launch-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shared chart factory
+  // ---------------------------------------------------------------------------
   function makeChart(canvasId, type, data, extraOpts = {}) {
     if (chartInstances[canvasId]) {
       chartInstances[canvasId].destroy();
     }
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
-
     const opts = {
       responsive: true,
       maintainAspectRatio: true,
-      plugins: {
-        datalabels: { display: false },
-        ...(extraOpts.plugins || {})
-      },
+      plugins: { datalabels: { display: false }, ...(extraOpts.plugins || {}) },
       scales: type === 'doughnut' || type === 'pie' ? undefined : {
         x: { grid: { color: 'rgba(226,232,240,0.5)' } },
         y: { grid: { color: 'rgba(226,232,240,0.5)' } },
@@ -656,9 +857,7 @@
       },
       ...extraOpts,
     };
-    delete opts.plugins;
     opts.plugins = { datalabels: { display: false }, ...(extraOpts.plugins || {}) };
-
     chartInstances[canvasId] = new Chart(ctx, { type, data, options: opts });
   }
 

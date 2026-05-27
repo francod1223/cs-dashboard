@@ -49,6 +49,7 @@
 <nav class="tab-bar">
   <button class="tab-btn active" data-tab="tab-indicators">Indicators / Graphs</button>
   <button class="tab-btn" data-tab="tab-details">Details</button>
+  <button class="tab-btn" data-tab="tab-ttl">&#x1F680; Time to Launch</button>
 </nav>
 
 <!-- Tab 1: Indicators -->
@@ -133,6 +134,80 @@
       </table>
     </div>
   </div>
+
+  <!-- Tab 3: Time to Launch -->
+  <div class="tab-content" id="tab-ttl">
+    <!-- Loading state -->
+    <div id="ttl-loading" style="display:flex;align-items:center;justify-content:center;padding:80px;flex-direction:column;gap:16px;">
+      <div class="spinner"></div>
+      <div class="loading-text">Loading Time to Launch data&#8230;</div>
+    </div>
+
+    <!-- Content (shown after data loads) -->
+    <div id="ttl-content" style="display:none;">
+
+      <div class="section-header">
+        <h2>Time to Launch</h2>
+        <span class="badge badge-blue" id="ttl-badge-total">0 orgs</span>
+        <span id="ttl-generated" style="font-size:12px;color:#718096;margin-left:auto;"></span>
+        <button class="btn-refresh" id="ttl-btn-refresh" style="margin-left:8px;">&#x27F3; Refresh</button>
+      </div>
+
+      <!-- KPI strip -->
+      <div class="kpi-grid" id="ttl-kpis"></div>
+
+      <!-- TTL Filters -->
+      <div class="filter-bar" style="margin:16px 0;">
+        <label>Owner</label>
+        <select id="ttl-filter-owner"><option value="">All Owners</option></select>
+        <label>Status</label>
+        <select id="ttl-filter-status">
+          <option value="">All</option>
+          <option value="in_onboarding">In Onboarding</option>
+          <option value="launched">Launched</option>
+        </select>
+        <label>Search</label>
+        <input type="text" id="ttl-filter-search" class="search-input" placeholder="Search org name&#8230;">
+        <span class="filter-count" id="ttl-filter-count"></span>
+      </div>
+
+      <!-- Charts 2x2 -->
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>Onboarding Aging (Days Open)</h3>
+          <canvas id="ttl-aging"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Time to Launch Distribution (Launched Orgs)</h3>
+          <canvas id="ttl-launch-dist"></canvas>
+        </div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>In Onboarding vs Launched by Owner</h3>
+          <canvas id="ttl-by-owner"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Overall Launch Rate</h3>
+          <canvas id="ttl-launch-rate"></canvas>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="table-controls">
+        <span class="filter-count" id="ttl-table-count"></span>
+        <button class="btn-export" id="ttl-btn-export">&#x2B07; Export CSV</button>
+      </div>
+      <div class="details-wrap">
+        <table class="details-table" id="ttl-table">
+          <thead id="ttl-thead"></thead>
+          <tbody id="ttl-tbody"></tbody>
+        </table>
+      </div>
+
+    </div>
+  </div>
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
