@@ -166,6 +166,8 @@
           <option value="in_onboarding">In Onboarding</option>
           <option value="launched">Launched</option>
         </select>
+        <label>Integration</label>
+        <select id="ttl-filter-integration"><option value="">All</option></select>
         <label>Search</label>
         <input type="text" id="ttl-filter-search" class="search-input" placeholder="Search org name&#8230;">
         <span class="filter-count" id="ttl-filter-count"></span>
@@ -208,6 +210,41 @@
     </div>
   </div>
 
+</div>
+
+<!-- Org Override Modal -->
+<div id="ttl-override-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;padding:28px 32px;width:420px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,0.25);">
+    <h3 style="margin:0 0 4px;font-size:16px;color:#1A202C;">Edit Org Override</h3>
+    <p id="ttl-override-orgname" style="margin:0 0 20px;font-size:13px;color:#718096;"></p>
+
+    <label style="display:flex;align-items:center;gap:10px;margin-bottom:18px;font-size:14px;cursor:pointer;">
+      <input type="checkbox" id="ttl-ov-hidden" style="width:16px;height:16px;">
+      <span><strong>Hide this org</strong> — exclude from all counts &amp; charts<br>
+      <span style="color:#718096;font-size:12px;">(use for test accounts, v1 duplicates, sales-only orgs)</span></span>
+    </label>
+
+    <div style="margin-bottom:16px;">
+      <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:#4A5568;">Manual Billing Start Date</label>
+      <input type="date" id="ttl-ov-date" style="width:100%;box-sizing:border-box;border:1px solid #E2E8F0;border-radius:6px;padding:8px 10px;font-size:14px;">
+      <p style="margin:4px 0 0;font-size:12px;color:#718096;">Overrides the date from Metabase. Use for v1→v2 transitions where <code>active_billing_date</code> is missing.</p>
+    </div>
+
+    <div style="margin-bottom:20px;">
+      <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:#4A5568;">Notes</label>
+      <input type="text" id="ttl-ov-notes" placeholder="e.g. v1 transition, test account…" style="width:100%;box-sizing:border-box;border:1px solid #E2E8F0;border-radius:6px;padding:8px 10px;font-size:14px;">
+    </div>
+
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button id="ttl-ov-cancel" style="padding:8px 18px;border:1px solid #E2E8F0;border-radius:6px;background:#fff;cursor:pointer;font-size:14px;">Cancel</button>
+      <button id="ttl-ov-clear" style="padding:8px 18px;border:1px solid #FC8181;border-radius:6px;background:#fff;color:#C53030;cursor:pointer;font-size:14px;">Clear Override</button>
+      <button id="ttl-ov-save" style="padding:8px 20px;border:none;border-radius:6px;background:#3182CE;color:#fff;cursor:pointer;font-size:14px;font-weight:600;">Save</button>
+    </div>
+
+    <p style="margin:14px 0 0;font-size:11px;color:#A0AEC0;">
+      ⚠ Overrides are stored in server memory. To make them permanent, copy the exported JSON into the <code>TTL_OVERRIDES_JSON</code> environment variable on Render.
+    </p>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>

@@ -638,6 +638,7 @@
       setupTTLRefresh();
       setupTTLExport();
       setupTTLTableSort();
+      setupTTLOverrideModal();
     } catch (err) {
       loading.style.display = 'none';
       content.style.display = 'block';
@@ -648,11 +649,27 @@
   function initTTLFilters() {
     if (!TTL_DATA || ttlFiltersReady) return;
     ttlFiltersReady = true;
+
     const ownerSel = $('#ttl-filter-owner');
     ownerSel.innerHTML = '<option value="">All Owners</option>';
     const owners = [...new Set(TTL_DATA.orgs.map(o => o.hs_owner).filter(Boolean))].sort();
     owners.forEach(o => { ownerSel.innerHTML += `<option value="${o}">${o}</option>`; });
     ownerSel.addEventListener('change', () => { applyTTLFilters(); renderTTL(); });
+
+    const intSel = $('#ttl-filter-integration');
+    if (intSel) {
+      intSel.innerHTML = '<option value="">All Integrations</option>';
+      const ints = [...new Set(
+        TTL_DATA.orgs.flatMap(o => o.integrations ? o.integrations.split(', ') : [])
+      )].sort();
+      ints.forEach(i => {
+        const label = { aspire: 'Aspire', jobber: 'Jobber', quickbooks_time: 'QuickBooks Time',
+          lmn: 'LMN', procore: 'Procore', boss: 'BOSS', paycom: 'Paycom', salesforce: 'Salesforce' }[i] || i;
+        intSel.innerHTML += `<option value="${i}">${label}</option>`;
+      });
+      intSel.addEventListener('change', () => { applyTTLFilters(); renderTTL(); });
+    }
+
     $('#ttl-filter-status').addEventListener('change', () => { applyTTLFilters(); renderTTL(); });
     $('#ttl-filter-search').addEventListener('input', () => { applyTTLFilters(); renderTTL(); });
   }
@@ -661,10 +678,15 @@
     if (!TTL_DATA) return;
     const owner = $('#ttl-filter-owner').value;
     const status = $('#ttl-filter-status').value;
+    const integration = ($('#ttl-filter-integration') || {}).value || '';
     const search = ($('#ttl-filter-search').value || '').toLowerCase().trim();
     ttlFiltered = TTL_DATA.orgs.filter(o => {
       if (owner && o.hs_owner !== owner) return false;
       if (status === 'launched' && !o.is_launched) return false;
+      if (integration) {
+        const orgInts = (o.integrations || '').split(', ').map(s => s.trim()).filter(Boolean);
+        if (!orgInts.includes(integration)) return false;
+      }
       if (status === 'in_onboarding' && o.is_launched) return false;
       if (search && !(o.organization_name || '').toLowerCase().includes(search)) return false;
       return true;
@@ -689,55 +711,99 @@
     renderTTLTable();
   }
 
+  function computeTTLAggregates(orgs) {
+    const agingBuckets = [
+      { label: '0-14d', count: 0 }, { label: '15-30d', count: 0 },
+      { label: '31-60d', count: 0 }, { label: '61-90d', count: 0 }, { label: '90d+', count: 0 },
+    ];
+    const launchDist = [
+      { label: '0-14d', count: 0 }, { label: '15-30d', count: 0 },
+      { label: '31-60d', count: 0 }, { label: '61-90d', count: 0 }, { label: '90d+', count: 0 },
+    ];
+    const ownerMap = {};
+    let launched = 0, inOnboarding = 0;
+    orgs.forEach(o => {
+      if (o.is_launched) {
+        launched++;
+        const d = o.days_to_launch || 0;
+        if (d <= 14) launchDist[0].count++;
+        else if (d <= 30) launchDist[1].count++;
+        else if (d <= 60) launchDist[2].count++;
+        else if (d <= 90) launchDist[3].count++;
+        else launchDist[4].count++;
+      } else {
+        inOnboarding++;
+        const d = o.days_in_onboarding || 0;
+        if (d <= 14) agingBuckets[0].count++;
+        else if (d <= 30) agingBuckets[1].count++;
+        else if (d <= 60) agingBuckets[2].count++;
+        else if (d <= 90) agingBuckets[3].count++;
+        else agingBuckets[4].count++;
+      }
+      const owner = o.hs_owner || 'Unassigned';
+      if (!ownerMap[owner]) ownerMap[owner] = { owner, launched: 0, in_onboarding: 0 };
+      if (o.is_launched) ownerMap[owner].launched++; else ownerMap[owner].in_onboarding++;
+    });
+    return {
+      agingBuckets, launchDist,
+      byOwner: Object.values(ownerMap).sort((a, b) => b.in_onboarding - a.in_onboarding),
+      launched, inOnboarding,
+    };
+  }
+
   function renderTTLCharts() {
     if (!TTL_DATA) return;
+    // Use ttlFiltered so all filters (owner, status, integration) affect charts
+    const agg = computeTTLAggregates(ttlFiltered);
+
     makeChart('ttl-aging', 'bar', {
-      labels: TTL_DATA.aging_buckets.map(b => b.label),
-      datasets: [{ label: 'Orgs in Onboarding', data: TTL_DATA.aging_buckets.map(b => b.count),
+      labels: agg.agingBuckets.map(b => b.label),
+      datasets: [{ label: 'Orgs in Onboarding', data: agg.agingBuckets.map(b => b.count),
         backgroundColor: [COLORS.green, COLORS.blue, COLORS.orange, COLORS.red, '#C53030'], borderRadius: 6 }]
     }, { indexAxis: 'y', plugins: { legend: { display: false } } });
 
     makeChart('ttl-launch-dist', 'bar', {
-      labels: TTL_DATA.launch_dist.map(b => b.label),
-      datasets: [{ label: 'Launched Orgs', data: TTL_DATA.launch_dist.map(b => b.count),
+      labels: agg.launchDist.map(b => b.label),
+      datasets: [{ label: 'Launched Orgs', data: agg.launchDist.map(b => b.count),
         backgroundColor: [COLORS.green, COLORS.blue, COLORS.orange, COLORS.red, '#C53030'], borderRadius: 6 }]
     }, { plugins: { legend: { display: false } } });
 
-    const byOwner = TTL_DATA.by_owner;
     makeChart('ttl-by-owner', 'bar', {
-      labels: byOwner.map(o => o.owner),
+      labels: agg.byOwner.map(o => o.owner),
       datasets: [
-        { label: 'In Onboarding', data: byOwner.map(o => o.in_onboarding), backgroundColor: COLORS.orange, borderRadius: 2 },
-        { label: 'Launched', data: byOwner.map(o => o.launched), backgroundColor: COLORS.green, borderRadius: 2 },
+        { label: 'In Onboarding', data: agg.byOwner.map(o => o.in_onboarding), backgroundColor: COLORS.orange, borderRadius: 2 },
+        { label: 'Launched', data: agg.byOwner.map(o => o.launched), backgroundColor: COLORS.green, borderRadius: 2 },
       ]
     }, { scales: { x: { stacked: true }, y: { stacked: true } } });
 
-    const s = TTL_DATA.summary;
     makeChart('ttl-launch-rate', 'doughnut', {
       labels: ['Launched', 'In Onboarding'],
-      datasets: [{ data: [s.launched, s.in_onboarding],
+      datasets: [{ data: [agg.launched, agg.inOnboarding],
         backgroundColor: [COLORS.green, COLORS.orangeLight], borderWidth: 0 }]
     }, { cutout: '65%' });
   }
 
   const TTL_COLS = [
+    { key: '_actions', label: '', type: 'actions' },
     { key: 'organization_name', label: 'Organization', sortable: true },
     { key: 'is_launched', label: 'Status', type: 'ttl_status', sortable: true },
     { key: 'organization_created_at', label: 'Created', type: 'date', sortable: true },
-    { key: 'active_billing_date', label: 'Billing Start', type: 'date', sortable: true },
+    { key: 'active_billing_date', label: 'Billing Start', type: 'date_ov', sortable: true },
     { key: 'days_to_launch', label: 'Days to Launch', type: 'num', sortable: true },
     { key: 'days_in_onboarding', label: 'Days Open', type: 'num_heat', sortable: true },
     { key: 'active_user_count', label: 'Active Users', type: 'num', sortable: true },
+    { key: 'integrations', label: 'Integrations' },
+    { key: 'fathom_meetings', label: 'Meetings', type: 'num', sortable: true },
     { key: 'hs_owner', label: 'HS Owner', sortable: true },
     { key: 'hs_stage', label: 'HS Stage' },
-    { key: 'hs_employees', label: 'HS Employees', type: 'num', sortable: true },
-    { key: 'integrations', label: 'Integrations' },
+    { key: 'hs_employees', label: 'Employees', type: 'num', sortable: true },
   ];
 
   function setupTTLTableSort() {
     const thead = $('#ttl-thead');
     if (!thead) return;
     thead.innerHTML = '<tr>' + TTL_COLS.map(c => {
+      if (c.type === 'actions') return `<th style="width:32px;"></th>`;
       const arrow = ttlSortCol === c.key ? (ttlSortAsc ? ' ▲' : ' ▼') : '';
       const style = c.sortable ? 'cursor:pointer;' : '';
       return `<th style="${style}" data-col="${c.key}">${c.label}${arrow}</th>`;
@@ -771,18 +837,30 @@
     tbody.innerHTML = rows.map(o => {
       const rowCls = (!o.is_launched && o.days_in_onboarding > 60) ? 'at-risk' :
                      (!o.is_launched && o.days_in_onboarding > 30) ? 'prepay' : '';
-      return `<tr class="${rowCls}">${TTL_COLS.map(c => `<td>${formatTTLCell(o[c.key], c.type, o)}</td>`).join('')}</tr>`;
+      return `<tr class="${rowCls}" data-org-id="${o.organization_id}">${TTL_COLS.map(c => `<td>${formatTTLCell(o[c.key], c.type, o)}</td>`).join('')}</tr>`;
     }).join('');
     $('#ttl-table-count').textContent = `${rows.length} orgs`;
+
+    // Wire up edit buttons
+    tbody.querySelectorAll('.ttl-edit-btn').forEach(btn => {
+      btn.addEventListener('click', () => openTTLOverrideModal(Number(btn.dataset.id)));
+    });
   }
 
   function formatTTLCell(val, type, org) {
     switch (type) {
+      case 'actions':
+        return `<button class="ttl-edit-btn" data-id="${org.organization_id}" title="Edit override" style="border:none;background:transparent;cursor:pointer;padding:2px 6px;border-radius:4px;color:#718096;font-size:13px;">✏️</button>`;
       case 'ttl_status':
         return org.is_launched
           ? '<span class="status-pill billing">Launched</span>'
           : '<span class="status-pill inactive">In Onboarding</span>';
       case 'date': return shortDate(val);
+      case 'date_ov': {
+        const d = shortDate(val);
+        if (!org.is_manual_date) return d;
+        return `<span title="${org.override_notes || 'Manual override'}" style="color:#805AD5;font-weight:600;">${d} ✏</span>`;
+      }
       case 'num': return val != null ? fmt(val) : '<span style="color:#A0AEC0">-</span>';
       case 'num_heat': {
         if (val == null) return '<span style="color:#A0AEC0">-</span>';
@@ -811,17 +889,82 @@
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // TTL Org Override Modal
+  // ---------------------------------------------------------------------------
+  let _ttlOverrideOrgId = null;
+
+  function openTTLOverrideModal(orgId) {
+    const org = TTL_DATA && TTL_DATA.orgs.find(o => o.organization_id === orgId);
+    if (!org) return;
+    _ttlOverrideOrgId = orgId;
+    $('#ttl-override-orgname').textContent = `Org #${orgId}: ${org.organization_name}`;
+    $('#ttl-ov-hidden').checked = !!org._override_hidden;
+    $('#ttl-ov-date').value = org.is_manual_date ? (org.active_billing_date || '').slice(0, 10) : '';
+    $('#ttl-ov-notes').value = org.override_notes || '';
+    const backdrop = $('#ttl-override-backdrop');
+    backdrop.style.display = 'flex';
+  }
+
+  function closeTTLOverrideModal() {
+    $('#ttl-override-backdrop').style.display = 'none';
+    _ttlOverrideOrgId = null;
+  }
+
+  async function saveTTLOverride(clear = false) {
+    if (!_ttlOverrideOrgId) return;
+    const org = TTL_DATA.orgs.find(o => o.organization_id === _ttlOverrideOrgId)
+              || { organization_id: _ttlOverrideOrgId, organization_name: '' };
+
+    if (clear) {
+      await fetch(`/api/ttl/overrides/${_ttlOverrideOrgId}`, { method: 'DELETE' });
+    } else {
+      const body = {
+        org_id: _ttlOverrideOrgId,
+        org_name: org.organization_name,
+        hidden: $('#ttl-ov-hidden').checked,
+        manual_billing_date: $('#ttl-ov-date').value || null,
+        notes: $('#ttl-ov-notes').value,
+      };
+      const res = await fetch('/api/ttl/overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (json.export_hint) {
+        console.info('[TTL] TTL_OVERRIDES_JSON value for Render env var:\n', json.export_hint);
+      }
+    }
+
+    closeTTLOverrideModal();
+    // Refresh data so changes are reflected
+    TTL_DATA = null;
+    ttlFiltersReady = false;
+    await loadTTLData();
+  }
+
+  function setupTTLOverrideModal() {
+    const backdrop = $('#ttl-override-backdrop');
+    if (!backdrop) return;
+    backdrop.addEventListener('click', e => { if (e.target === backdrop) closeTTLOverrideModal(); });
+    $('#ttl-ov-cancel').addEventListener('click', closeTTLOverrideModal);
+    $('#ttl-ov-save').addEventListener('click', () => saveTTLOverride(false));
+    $('#ttl-ov-clear').addEventListener('click', () => saveTTLOverride(true));
+  }
+
   function setupTTLExport() {
     const btn = $('#ttl-btn-export');
     if (!btn) return;
     btn.addEventListener('click', () => {
-      const header = TTL_COLS.map(c => c.label).join(',');
+      const exportCols = TTL_COLS.filter(c => c.type !== 'actions');
+      const header = exportCols.map(c => c.label || c.key).join(',');
       const rows = ttlFiltered.map(o =>
-        TTL_COLS.map(c => {
+        exportCols.map(c => {
           if (c.key === 'is_launched') return o.is_launched ? 'Launched' : 'In Onboarding';
           let v = o[c.key];
           if (v == null) return '';
-          if (c.type === 'date') return shortDate(v);
+          if (c.type === 'date' || c.type === 'date_ov') return shortDate(v);
           if (typeof v === 'string' && v.includes(',')) return `"${v}"`;
           return v;
         }).join(',')

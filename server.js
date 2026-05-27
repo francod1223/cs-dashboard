@@ -235,6 +235,22 @@ app.post('/api/refresh', requireAuth, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// TTL Org Overrides — in-memory store (persisted via TTL_OVERRIDES_JSON env var)
+// ---------------------------------------------------------------------------
+let ttlOverrides = {};   // keyed by org_id (number)
+(function loadOverridesFromEnv() {
+  try {
+    if (process.env.TTL_OVERRIDES_JSON) {
+      const parsed = JSON.parse(process.env.TTL_OVERRIDES_JSON);
+      parsed.forEach(o => { if (o.org_id) ttlOverrides[Number(o.org_id)] = o; });
+      console.log(`[TTL] Loaded ${Object.keys(ttlOverrides).length} org overrides from env`);
+    }
+  } catch (e) {
+    console.warn('[TTL] Could not parse TTL_OVERRIDES_JSON:', e.message);
+  }
+})();
+
+// ---------------------------------------------------------------------------
 // HubSpot — Time to Launch
 // ---------------------------------------------------------------------------
 const HS_PIPELINE = '867839032';
@@ -277,34 +293,64 @@ async function fetchHubSpotDeals() {
 function normalizeCompanyName(name) {
   if (!name) return '';
   return name.toLowerCase()
+    .replace(/\s*\(\d+\)\s*/g, ' ')   // strip (2), (3) deal-duplicate suffixes
     .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\b(llc|inc|ltd|co|corp|company|the|and|services|group|solutions|design|construction|painting|landscape|landscaping|lawn|care|tree|cleaning|window|roofing|building|builders|management|enterprises|enterprise)\b/g, '')
+    // Only strip generic legal/filler words — keep industry words for matching signal
+    .replace(/\b(llc|inc|ltd|co|corp|company|the|and|of|a|an)\b/g, '')
     .replace(/\s+/g, ' ').trim();
 }
 
 function matchDealToOrg(orgName, deals) {
   const normOrg = normalizeCompanyName(orgName);
-  if (!normOrg) return null;
+  if (!normOrg || normOrg.length < 3) return null;
+
+  // Pass 1: exact match after normalization
   for (const deal of deals) {
     if (normalizeCompanyName(deal.properties.dealname) === normOrg) return deal;
   }
-  const orgWords = new Set(normOrg.split(' ').filter(w => w.length > 2));
-  let bestMatch = null, bestScore = 1;
+
+  // Pass 2: substring containment — one fully contains the other (both ≥5 chars)
   for (const deal of deals) {
     const dealNorm = normalizeCompanyName(deal.properties.dealname);
-    const dealWords = dealNorm.split(' ').filter(w => w.length > 2);
-    const common = dealWords.filter(w => orgWords.has(w));
-    if (common.length > bestScore) { bestScore = common.length; bestMatch = deal; }
+    if (dealNorm.length >= 5 && normOrg.length >= 5) {
+      if (dealNorm.includes(normOrg) || normOrg.includes(dealNorm)) return deal;
+    }
   }
-  return bestScore >= 2 ? bestMatch : null;
+
+  // Pass 3: significant word overlap
+  // Require ≥1 word of ≥5 chars, OR ≥2 words of ≥4 chars
+  const orgWords4 = new Set(normOrg.split(' ').filter(w => w.length >= 4));
+  const orgWords5 = new Set(normOrg.split(' ').filter(w => w.length >= 5));
+  if (orgWords4.size === 0) return null;
+
+  let bestMatch = null, bestScore = 0;
+  for (const deal of deals) {
+    const dealNorm = normalizeCompanyName(deal.properties.dealname);
+    const dealWords = dealNorm.split(' ');
+    const common4 = dealWords.filter(w => w.length >= 4 && orgWords4.has(w));
+    const common5 = dealWords.filter(w => w.length >= 5 && orgWords5.has(w));
+    // Score: prioritize longer word matches
+    const score = common5.length >= 1 ? common5.length * 10 + common4.length
+                : common4.length >= 2 ? common4.length
+                : 0;
+    if (score > bestScore) { bestScore = score; bestMatch = deal; }
+  }
+  return bestScore > 0 ? bestMatch : null;
 }
 
-function buildTTLData(orgs, deals, stages) {
+function buildTTLData(orgs, deals, stages, overrides = {}) {
   const now = Date.now();
 
   const enriched = orgs.map(org => {
+    const ov = overrides[org.organization_id] || {};
+
+    // Skip orgs marked hidden in overrides
+    if (ov.hidden) return null;
+
     const createdAt = org.organization_created_at ? new Date(org.organization_created_at).getTime() : null;
-    const billingDate = org.active_billing_date ? new Date(org.active_billing_date).getTime() : null;
+    // Use manual billing date from override if set, otherwise use Metabase value
+    const rawBillingDate = ov.manual_billing_date || org.active_billing_date;
+    const billingDate = rawBillingDate ? new Date(rawBillingDate).getTime() : null;
     const isLaunched = !!billingDate;
     const daysToLaunch = (isLaunched && createdAt) ? Math.round((billingDate - createdAt) / 86400000) : null;
     const daysInOnboarding = (!isLaunched && createdAt) ? Math.round((now - createdAt) / 86400000) : null;
@@ -317,7 +363,7 @@ function buildTTLData(orgs, deals, stages) {
       organization_id: org.organization_id,
       organization_name: org.organization_name,
       organization_created_at: org.organization_created_at,
-      active_billing_date: org.active_billing_date,
+      active_billing_date: rawBillingDate,
       subscription_status: org.subscription_status,
       active_user_count: org.active_user_count,
       integrations: org.integrations,
@@ -331,8 +377,12 @@ function buildTTLData(orgs, deals, stages) {
         ? parseInt(deal.properties.number_of_implementation_employees) : null,
       deal_to_org_days: dealToOrgDays,
       hs_matched: !!deal,
+      // Override metadata (shown in UI)
+      is_manual_date: !!ov.manual_billing_date,
+      override_notes: ov.notes || null,
+      fathom_meetings: null,  // placeholder — populated when FATHOM_API_KEY is configured
     };
-  });
+  }).filter(Boolean);  // remove hidden orgs
 
   enriched.sort((a, b) => {
     if (a.is_launched && !b.is_launched) return 1;
@@ -430,11 +480,43 @@ async function fetchTTL(force = false) {
     fetchCard(process.env.CARD_CS_BILLING_MT || 77),
     fetchHubSpotDeals(),
   ]);
-  const data = buildTTLData(mtBilling, hsData.deals, hsData.stages);
-  console.log(`[TTL] Built: ${data.summary.total} orgs, ${data.summary.launched} launched, ${data.summary.hs_matched} HS-matched`);
+  const data = buildTTLData(mtBilling, hsData.deals, hsData.stages, ttlOverrides);
+  const hiddenCount = Object.values(ttlOverrides).filter(o => o.hidden).length;
+  console.log(`[TTL] Built: ${data.summary.total} orgs (${hiddenCount} hidden), ${data.summary.launched} launched, ${data.summary.hs_matched} HS-matched`);
   ttlCache = { data, ts: Date.now() };
   return data;
 }
+
+// ---------------------------------------------------------------------------
+// TTL Override endpoints (hidden flag + manual billing dates)
+// ---------------------------------------------------------------------------
+app.get('/api/ttl/overrides', requireAuth, (req, res) => {
+  res.json(Object.values(ttlOverrides));
+});
+
+app.post('/api/ttl/overrides', requireAuth, (req, res) => {
+  const { org_id, org_name, hidden, manual_billing_date, notes } = req.body;
+  if (!org_id) return res.status(400).json({ error: 'org_id required' });
+  const id = Number(org_id);
+  ttlOverrides[id] = {
+    org_id: id,
+    org_name: org_name || '',
+    hidden: !!hidden,
+    manual_billing_date: manual_billing_date || null,
+    notes: notes || '',
+    updated_at: new Date().toISOString(),
+  };
+  ttlCache = { data: null, ts: 0 };  // invalidate cache so next fetch picks it up
+  console.log(`[TTL] Override saved for org ${id} (${org_name}): hidden=${hidden}, date=${manual_billing_date}`);
+  res.json({ ok: true, override: ttlOverrides[id], export_hint: JSON.stringify(Object.values(ttlOverrides)) });
+});
+
+app.delete('/api/ttl/overrides/:org_id', requireAuth, (req, res) => {
+  const id = Number(req.params.org_id);
+  delete ttlOverrides[id];
+  ttlCache = { data: null, ts: 0 };
+  res.json({ ok: true });
+});
 
 app.get('/api/time-to-launch', requireAuth, async (req, res) => {
   try {
