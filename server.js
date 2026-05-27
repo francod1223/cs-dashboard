@@ -338,7 +338,7 @@ function matchDealToOrg(orgName, deals) {
   return bestScore > 0 ? bestMatch : null;
 }
 
-function buildTTLData(orgs, deals, stages, overrides = {}) {
+function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
   const now = Date.now();
 
   const enriched = orgs.map(org => {
@@ -380,7 +380,7 @@ function buildTTLData(orgs, deals, stages, overrides = {}) {
       // Override metadata (shown in UI)
       is_manual_date: !!ov.manual_billing_date,
       override_notes: ov.notes || null,
-      fathom_meetings: null,  // placeholder — populated when FATHOM_API_KEY is configured
+      fathom_meetings: fathomCounts[normalizeCompanyName(org.organization_name)] || null,
     };
   }).filter(Boolean);  // remove hidden orgs
 
@@ -460,6 +460,7 @@ function buildTTLData(orgs, deals, stages, overrides = {}) {
       avg_days_open: avgOpen,
       longest_open: longestOpen,
       hs_matched: enriched.filter(o => o.hs_matched).length,
+      fathom_matched: enriched.filter(o => o.fathom_meetings != null).length,
     },
     aging_buckets: agingBuckets,
     launch_dist: launchDist,
@@ -468,6 +469,83 @@ function buildTTLData(orgs, deals, stages, overrides = {}) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Fathom — meeting counts per org
+// ---------------------------------------------------------------------------
+async function fetchFathomMeetings() {
+  const apiKey = process.env.FATHOM_API_KEY;
+  if (!apiKey) {
+    console.log('[Fathom] FATHOM_API_KEY not set — skipping meeting counts');
+    return [];
+  }
+  const allMeetings = [];
+  let cursor = null;
+  let pageCount = 0;
+  const MAX_PAGES = 25;  // ~250 meetings max (well within 60 req/min rate limit)
+  try {
+    do {
+      const params = new URLSearchParams({ calendar_invitees_domains_type: 'one_or_more_external', include_crm_matches: 'true' });
+      if (cursor) params.set('cursor', cursor);
+      const res = await axios.get(`https://api.fathom.ai/external/v1/meetings?${params}`, {
+        headers: { 'X-Api-Key': apiKey },
+        timeout: 15000,
+      });
+      const items = res.data.items || [];
+      allMeetings.push(...items);
+      cursor = res.data.next_cursor || null;
+      pageCount++;
+      if (pageCount >= MAX_PAGES) break;
+    } while (cursor);
+    console.log(`[Fathom] Fetched ${allMeetings.length} external meetings across ${pageCount} pages`);
+    return allMeetings;
+  } catch (err) {
+    console.warn('[Fathom] Failed to fetch meetings:', err.message);
+    return [];
+  }
+}
+
+// Build a map of normalized-org-name → meeting count
+function countFathomMeetingsPerOrg(meetings) {
+  const counts = {};
+  const bump = (name) => {
+    if (!name) return;
+    const key = normalizeCompanyName(name);
+    if (key.length < 3) return;
+    counts[key] = (counts[key] || 0) + 1;
+  };
+
+  meetings.forEach(m => {
+    // Strategy 1: CRM company matches (HubSpot — most reliable)
+    const companies = m.crm_matches?.companies || [];
+    if (companies.length > 0) {
+      companies.forEach(c => bump(c.name));
+      return;
+    }
+
+    // Strategy 2: parse meeting title for known patterns
+    const title = (m.title || '').replace(/[\u{1F300}-\u{1FFFF}]/gu, '').trim();  // strip emoji
+
+    // "[Name] at [Company] x Protiv [...]"
+    let match = title.match(/at (.+?)\s+[x×]\s+Protiv/i);
+    if (match) { bump(match[1].trim()); return; }
+
+    // "[Company] x Protiv [...]"
+    match = title.match(/^(.+?)\s+[x×]\s+Protiv/i);
+    if (match) { bump(match[1].trim()); return; }
+
+    // "[Company] - Protiv [...]" or "[Company] — Protiv [...]"
+    match = title.match(/^(.+?)\s+[-–—]\s+Protiv/i);
+    if (match) { bump(match[1].trim()); return; }
+
+    // "Protiv [x/-] [Company]"
+    match = title.match(/^Protiv\s+[x×/-]\s+(.+)/i);
+    if (match) { bump(match[1].trim()); return; }
+  });
+
+  return counts;
+}
+
+// Update buildTTLData to accept fathomCounts
 let ttlCache = { data: null, ts: 0 };
 const TTL_CACHE_MS = 5 * 60 * 1000;
 
@@ -476,11 +554,14 @@ async function fetchTTL(force = false) {
     return ttlCache.data;
   }
   console.log('[TTL] Fetching Time-to-Launch data...');
-  const [mtBilling, hsData] = await Promise.all([
+  const [mtBilling, hsData, fathomMeetings] = await Promise.all([
     fetchCard(process.env.CARD_CS_BILLING_MT || 77),
     fetchHubSpotDeals(),
+    fetchFathomMeetings(),
   ]);
-  const data = buildTTLData(mtBilling, hsData.deals, hsData.stages, ttlOverrides);
+  const fathomCounts = countFathomMeetingsPerOrg(fathomMeetings);
+  console.log(`[Fathom] Meeting counts built for ${Object.keys(fathomCounts).length} unique orgs`);
+  const data = buildTTLData(mtBilling, hsData.deals, hsData.stages, ttlOverrides, fathomCounts);
   const hiddenCount = Object.values(ttlOverrides).filter(o => o.hidden).length;
   console.log(`[TTL] Built: ${data.summary.total} orgs (${hiddenCount} hidden), ${data.summary.launched} launched, ${data.summary.hs_matched} HS-matched`);
   ttlCache = { data, ts: Date.now() };
