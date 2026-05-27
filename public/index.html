@@ -150,7 +150,8 @@
         <h2>Time to Launch</h2>
         <span class="badge badge-blue" id="ttl-badge-total">0 orgs</span>
         <span id="ttl-generated" style="font-size:12px;color:#718096;margin-left:auto;"></span>
-        <button class="btn-refresh" id="ttl-btn-refresh" style="margin-left:8px;">&#x27F3; Refresh</button>
+        <button id="ttl-btn-persist" title="Copy override JSON to clipboard — paste into TTL_OVERRIDES_JSON on Render to persist across deploys" style="margin-left:8px;padding:5px 12px;border:1px solid #68D391;border-radius:6px;background:#F0FFF4;color:#276749;font-size:12px;font-weight:600;cursor:pointer;">&#x1F4BE; Save overrides</button>
+        <button class="btn-refresh" id="ttl-btn-refresh" style="margin-left:4px;">&#x27F3; Refresh</button>
       </div>
 
       <!-- KPI strip -->
@@ -219,9 +220,22 @@
       <div id="ttl-bulk-bar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#EBF8FF;border:1px solid #BEE3F8;border-radius:8px;margin-bottom:8px;">
         <span id="ttl-bulk-count" style="font-size:13px;font-weight:600;color:#2B6CB0;"></span>
         <button id="ttl-bulk-lost-btn" onclick="bulkMarkLost()" style="padding:6px 16px;background:#744210;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x1F6AB; Mark as Lost</button>
-        <button id="ttl-bulk-v1-btn" onclick="bulkMarkV1()" style="padding:6px 16px;background:#553C9A;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x1F504; Tag as V1 Migration</button>
-        <button id="ttl-bulk-hide-btn" onclick="bulkHideSelected()" style="padding:6px 16px;background:#4A5568;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x1F648; Hide selected</button>
-        <span style="font-size:12px;color:#718096;">Lost = paid impl fee, never launched. V1 = migrating from v1. Hidden = test/duplicate accounts.</span>
+        <button id="ttl-bulk-v1-btn" onclick="bulkMarkV1()" style="padding:6px 16px;background:#553C9A;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x1F504; Tag V1 Migration</button>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <select id="ttl-bulk-block-reason" style="padding:6px 10px;border:1px solid #BEE3F8;border-radius:6px;font-size:13px;background:#fff;cursor:pointer;">
+            <option value="">Set block reason&#8230;</option>
+            <option value="technical_problems">Technical problems</option>
+            <option value="worried_overpaying">Worried about overpaying</option>
+            <option value="budget_issues">Budget issues</option>
+            <option value="internal_decision">Internal decision-making</option>
+            <option value="no_technical_leader">No technical leader</option>
+            <option value="key_champion_left">Key champion left</option>
+            <option value="never_responded">Never responded / ghosted</option>
+            <option value="timing_seasonal">Timing / seasonal pause</option>
+          </select>
+          <button id="ttl-bulk-block-btn" onclick="bulkSetBlockReason()" style="padding:6px 14px;background:#2B6CB0;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x2714; Apply</button>
+        </div>
+        <button id="ttl-bulk-hide-btn" onclick="bulkHideSelected()" style="padding:6px 16px;background:#4A5568;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x1F648; Hide</button>
         <button onclick="document.querySelectorAll('.ttl-row-check').forEach(c=>c.checked=false);document.getElementById('ttl-bulk-bar').style.display='none';" style="margin-left:auto;padding:4px 10px;border:1px solid #BEE3F8;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;">Clear</button>
       </div>
       <div class="details-wrap">

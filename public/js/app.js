@@ -632,13 +632,14 @@
       TTL_DATA = await res.json();
       loading.style.display = 'none';
       content.style.display = 'block';
+      setupTTLTableSort();      // must run first — creates the header checkbox before renderTTL touches it
       initTTLFilters();
       applyTTLFilters();
       renderTTL();
       setupTTLRefresh();
       setupTTLExport();
-      setupTTLTableSort();
       setupTTLOverrideModal();
+      setupTTLPersistButton();
     } catch (err) {
       loading.style.display = 'none';
       content.style.display = 'block';
@@ -858,6 +859,16 @@
       const style = c.sortable ? 'cursor:pointer;' : '';
       return `<th style="${style}" data-col="${c.key}">${c.label}${arrow}</th>`;
     }).join('') + '</tr>';
+
+    // Wire select-all here — right after creating the checkbox, before anything else touches it
+    const checkAll = document.getElementById('ttl-check-all');
+    if (checkAll) {
+      checkAll.addEventListener('change', () => {
+        document.querySelectorAll('#ttl-tbody .ttl-row-check').forEach(cb => { cb.checked = checkAll.checked; });
+        updateBulkBar();
+      });
+    }
+
     thead.querySelectorAll('th[data-col]').forEach(th => {
       const col = TTL_COLS.find(c => c.key === th.dataset.col);
       if (!col || !col.sortable) return;
@@ -904,14 +915,7 @@
       btn.addEventListener('click', () => openTTLOverrideModal(Number(btn.dataset.id)));
     });
 
-    // Wire up select-all checkbox
-    const checkAll = document.getElementById('ttl-check-all');
-    if (checkAll) {
-      checkAll.addEventListener('change', () => {
-        tbody.querySelectorAll('.ttl-row-check').forEach(cb => { cb.checked = checkAll.checked; });
-        updateBulkBar();
-      });
-    }
+    // Wire row checkboxes (select-all is wired in setupTTLTableSort — only once per thead creation)
     tbody.querySelectorAll('.ttl-row-check').forEach(cb => {
       cb.addEventListener('change', updateBulkBar);
     });
@@ -1012,10 +1016,44 @@
     renderTTL();
   }
 
+  async function bulkSetBlockReason() {
+    const reasonEl = document.getElementById('ttl-bulk-block-reason');
+    const reason = reasonEl ? reasonEl.value : '';
+    if (!reason) {
+      reasonEl && (reasonEl.style.border = '2px solid #FC8181');
+      setTimeout(() => { if (reasonEl) reasonEl.style.border = ''; }, 1500);
+      return;
+    }
+    const selected = [...document.querySelectorAll('.ttl-row-check:checked')];
+    if (!selected.length) return;
+    const btn = document.getElementById('ttl-bulk-block-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Applying…'; }
+    const ids = selected.map(cb => Number(cb.dataset.id));
+    await Promise.all(ids.map(id => {
+      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      return fetch('/api/ttl/overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ org_id: id, org_name: org ? org.organization_name : '', block_reason: reason }),
+      });
+    }));
+    ids.forEach(id => {
+      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      if (org) org.block_reason = reason;
+    });
+    if (btn) { btn.disabled = false; btn.textContent = '✔ Apply'; }
+    if (reasonEl) reasonEl.value = '';
+    document.querySelectorAll('.ttl-row-check').forEach(c => c.checked = false);
+    document.getElementById('ttl-bulk-bar').style.display = 'none';
+    applyTTLFilters();
+    renderTTL();
+  }
+
   // Expose for inline onclick in HTML
   window.bulkHideSelected = bulkHideSelected;
   window.bulkMarkLost = bulkMarkLost;
   window.bulkMarkV1 = bulkMarkV1;
+  window.bulkSetBlockReason = bulkSetBlockReason;
 
   function formatTTLCell(val, type, org) {
     switch (type) {
@@ -1058,6 +1096,27 @@
       }
       default: return val != null ? String(val) : '<span style="color:#A0AEC0">-</span>';
     }
+  }
+
+  function setupTTLPersistButton() {
+    const btn = document.getElementById('ttl-btn-persist');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/ttl/overrides/export');
+        const json = await res.text();
+        await navigator.clipboard.writeText(json);
+        btn.textContent = '✅ Copied!';
+        btn.style.background = '#C6F6D5';
+        setTimeout(() => {
+          btn.textContent = '💾 Save overrides';
+          btn.style.background = '#F0FFF4';
+        }, 2500);
+      } catch (e) {
+        // Fallback: open the export URL
+        window.open('/api/ttl/overrides/export', '_blank');
+      }
+    });
   }
 
   function setupTTLRefresh() {

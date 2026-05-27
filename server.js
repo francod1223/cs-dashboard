@@ -547,7 +547,7 @@ async function fetchFathomMeetingsRaw() {
     if (cursor) params.set('cursor', cursor);
     const res = await axios.get(`https://api.fathom.ai/external/v1/meetings?${params}`, {
       headers: { 'X-Api-Key': apiKey },
-      timeout: 6000,
+      timeout: 15000,
     });
     const items = res.data.items || [];
     allMeetings.push(...items);
