@@ -200,6 +200,14 @@
         <span class="filter-count" id="ttl-table-count"></span>
         <button class="btn-export" id="ttl-btn-export">&#x2B07; Export CSV</button>
       </div>
+
+      <!-- Bulk action bar (shown when rows are checked) -->
+      <div id="ttl-bulk-bar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#EBF8FF;border:1px solid #BEE3F8;border-radius:8px;margin-bottom:8px;">
+        <span id="ttl-bulk-count" style="font-size:13px;font-weight:600;color:#2B6CB0;"></span>
+        <button id="ttl-bulk-hide-btn" onclick="bulkHideSelected()" style="padding:6px 16px;background:#C53030;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x1F648; Hide selected</button>
+        <span style="font-size:12px;color:#718096;">Hidden orgs are excluded from all counts &amp; charts. Use for test accounts and duplicates.</span>
+        <button onclick="document.querySelectorAll('.ttl-row-check').forEach(c=>c.checked=false);document.getElementById('ttl-bulk-bar').style.display='none';" style="margin-left:auto;padding:4px 10px;border:1px solid #BEE3F8;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;">Clear</button>
+      </div>
       <div class="details-wrap">
         <table class="details-table" id="ttl-table">
           <thead id="ttl-thead"></thead>

@@ -784,6 +784,7 @@
   }
 
   const TTL_COLS = [
+    { key: '_check', label: '', type: 'check' },
     { key: '_actions', label: '', type: 'actions' },
     { key: 'organization_name', label: 'Organization', sortable: true },
     { key: 'is_launched', label: 'Status', type: 'ttl_status', sortable: true },
@@ -803,6 +804,7 @@
     const thead = $('#ttl-thead');
     if (!thead) return;
     thead.innerHTML = '<tr>' + TTL_COLS.map(c => {
+      if (c.type === 'check') return `<th style="width:22px;"><input type="checkbox" id="ttl-check-all" title="Select all" style="width:15px;height:15px;cursor:pointer;accent-color:#3182CE;"></th>`;
       if (c.type === 'actions') return `<th style="width:32px;"></th>`;
       const arrow = ttlSortCol === c.key ? (ttlSortAsc ? ' ▲' : ' ▼') : '';
       const style = c.sortable ? 'cursor:pointer;' : '';
@@ -845,10 +847,65 @@
     tbody.querySelectorAll('.ttl-edit-btn').forEach(btn => {
       btn.addEventListener('click', () => openTTLOverrideModal(Number(btn.dataset.id)));
     });
+
+    // Wire up select-all checkbox
+    const checkAll = document.getElementById('ttl-check-all');
+    if (checkAll) {
+      checkAll.addEventListener('change', () => {
+        tbody.querySelectorAll('.ttl-row-check').forEach(cb => { cb.checked = checkAll.checked; });
+        updateBulkBar();
+      });
+    }
+    tbody.querySelectorAll('.ttl-row-check').forEach(cb => {
+      cb.addEventListener('change', updateBulkBar);
+    });
+    updateBulkBar();
   }
+
+  function updateBulkBar() {
+    const selected = [...document.querySelectorAll('.ttl-row-check:checked')];
+    const bar = document.getElementById('ttl-bulk-bar');
+    if (!bar) return;
+    if (selected.length === 0) {
+      bar.style.display = 'none';
+    } else {
+      bar.style.display = 'flex';
+      const countEl = bar.querySelector('#ttl-bulk-count');
+      if (countEl) countEl.textContent = `${selected.length} org${selected.length > 1 ? 's' : ''} selected`;
+    }
+  }
+
+  async function bulkHideSelected() {
+    const selected = [...document.querySelectorAll('.ttl-row-check:checked')];
+    if (!selected.length) return;
+    const btn = document.getElementById('ttl-bulk-hide-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Hiding…'; }
+    const ids = selected.map(cb => Number(cb.dataset.id));
+    // Fire all hide requests in parallel
+    await Promise.all(ids.map(id => {
+      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      return fetch('/api/ttl/overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ org_id: id, org_name: org ? org.organization_name : '', hidden: true, manual_billing_date: null, notes: 'Bulk hidden' }),
+      });
+    }));
+    // Remove all hidden orgs from local data
+    TTL_DATA.orgs = TTL_DATA.orgs.filter(o => !ids.includes(o.organization_id));
+    TTL_DATA.summary.total = TTL_DATA.orgs.length;
+    if (btn) { btn.disabled = false; btn.textContent = 'Hide selected'; }
+    document.getElementById('ttl-bulk-bar').style.display = 'none';
+    applyTTLFilters();
+    renderTTL();
+  }
+
+  // Expose for inline onclick in HTML
+  window.bulkHideSelected = bulkHideSelected;
 
   function formatTTLCell(val, type, org) {
     switch (type) {
+      case 'check':
+        return `<input type="checkbox" class="ttl-row-check" data-id="${org.organization_id}" style="width:15px;height:15px;cursor:pointer;accent-color:#3182CE;">`;
       case 'actions':
         return `<button class="ttl-edit-btn" data-id="${org.organization_id}" title="Edit override" style="border:none;background:transparent;cursor:pointer;padding:2px 6px;border-radius:4px;color:#718096;font-size:13px;">✏️</button>`;
       case 'ttl_status':
@@ -913,35 +970,48 @@
 
   async function saveTTLOverride(clear = false) {
     if (!_ttlOverrideOrgId) return;
-    const org = TTL_DATA.orgs.find(o => o.organization_id === _ttlOverrideOrgId)
-              || { organization_id: _ttlOverrideOrgId, organization_name: '' };
+    const org = TTL_DATA.orgs.find(o => o.organization_id === _ttlOverrideOrgId);
+    if (!org) { closeTTLOverrideModal(); return; }
 
     if (clear) {
       await fetch(`/api/ttl/overrides/${_ttlOverrideOrgId}`, { method: 'DELETE' });
+      // Restore org to unoverridden state locally
+      org.is_manual_date = false;
+      org.override_notes = null;
     } else {
-      const body = {
-        org_id: _ttlOverrideOrgId,
-        org_name: org.organization_name,
-        hidden: $('#ttl-ov-hidden').checked,
-        manual_billing_date: $('#ttl-ov-date').value || null,
-        notes: $('#ttl-ov-notes').value,
-      };
+      const hidden = $('#ttl-ov-hidden').checked;
+      const manualDate = $('#ttl-ov-date').value || null;
+      const notes = $('#ttl-ov-notes').value;
+      const body = { org_id: _ttlOverrideOrgId, org_name: org.organization_name, hidden, manual_billing_date: manualDate, notes };
       const res = await fetch('/api/ttl/overrides', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       const json = await res.json();
-      if (json.export_hint) {
-        console.info('[TTL] TTL_OVERRIDES_JSON value for Render env var:\n', json.export_hint);
+      if (json.export_hint) console.info('[TTL] Paste into TTL_OVERRIDES_JSON on Render:\n', json.export_hint);
+
+      if (hidden) {
+        // Remove org from local data immediately — no reload needed
+        TTL_DATA.orgs = TTL_DATA.orgs.filter(o => o.organization_id !== _ttlOverrideOrgId);
+        TTL_DATA.summary.total = TTL_DATA.orgs.length;
+      } else {
+        // Update org fields locally
+        org.override_notes = notes || null;
+        if (manualDate) {
+          const createdMs = org.organization_created_at ? new Date(org.organization_created_at).getTime() : null;
+          const billingMs = new Date(manualDate).getTime();
+          org.active_billing_date = manualDate;
+          org.is_manual_date = true;
+          org.is_launched = true;
+          org.days_to_launch = createdMs ? Math.round((billingMs - createdMs) / 86400000) : null;
+          org.days_in_onboarding = null;
+        }
       }
     }
 
     closeTTLOverrideModal();
-    // Refresh data so changes are reflected
-    TTL_DATA = null;
-    ttlFiltersReady = false;
-    await loadTTLData();
+    // Re-filter and re-render locally — no server roundtrip needed
+    applyTTLFilters();
+    renderTTL();
   }
 
   function setupTTLOverrideModal() {
@@ -957,7 +1027,7 @@
     const btn = $('#ttl-btn-export');
     if (!btn) return;
     btn.addEventListener('click', () => {
-      const exportCols = TTL_COLS.filter(c => c.type !== 'actions');
+      const exportCols = TTL_COLS.filter(c => c.type !== 'actions' && c.type !== 'check');
       const header = exportCols.map(c => c.label || c.key).join(',');
       const rows = ttlFiltered.map(o =>
         exportCols.map(c => {

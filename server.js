@@ -380,7 +380,10 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
       // Override metadata (shown in UI)
       is_manual_date: !!ov.manual_billing_date,
       override_notes: ov.notes || null,
-      fathom_meetings: fathomCounts[normalizeCompanyName(org.organization_name)] || null,
+      // Fathom lookup: try org name first, then matched deal name (since Fathom CRM matches use HS company names)
+      fathom_meetings: fathomCounts[normalizeCompanyName(org.organization_name)]
+        || (deal ? fathomCounts[normalizeCompanyName(deal.properties.dealname)] : null)
+        || null,
     };
   }).filter(Boolean);  // remove hidden orgs
 
@@ -472,7 +475,7 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
 // ---------------------------------------------------------------------------
 // Fathom — meeting counts per org
 // ---------------------------------------------------------------------------
-async function fetchFathomMeetings() {
+async function fetchFathomMeetingsRaw() {
   const apiKey = process.env.FATHOM_API_KEY;
   if (!apiKey) {
     console.log('[Fathom] FATHOM_API_KEY not set — skipping meeting counts');
@@ -481,25 +484,33 @@ async function fetchFathomMeetings() {
   const allMeetings = [];
   let cursor = null;
   let pageCount = 0;
-  const MAX_PAGES = 25;  // ~250 meetings max (well within 60 req/min rate limit)
+  const MAX_PAGES = 15;  // 15 pages × up to 100/page = up to 1,500 meetings
+  do {
+    const params = new URLSearchParams({ calendar_invitees_domains_type: 'one_or_more_external', include_crm_matches: 'true', limit: '100' });
+    if (cursor) params.set('cursor', cursor);
+    const res = await axios.get(`https://api.fathom.ai/external/v1/meetings?${params}`, {
+      headers: { 'X-Api-Key': apiKey },
+      timeout: 6000,
+    });
+    const items = res.data.items || [];
+    allMeetings.push(...items);
+    cursor = res.data.next_cursor || null;
+    pageCount++;
+    if (pageCount >= MAX_PAGES) break;
+  } while (cursor);
+  console.log(`[Fathom] Fetched ${allMeetings.length} external meetings across ${pageCount} pages`);
+  return allMeetings;
+}
+
+async function fetchFathomMeetings() {
   try {
-    do {
-      const params = new URLSearchParams({ calendar_invitees_domains_type: 'one_or_more_external', include_crm_matches: 'true' });
-      if (cursor) params.set('cursor', cursor);
-      const res = await axios.get(`https://api.fathom.ai/external/v1/meetings?${params}`, {
-        headers: { 'X-Api-Key': apiKey },
-        timeout: 15000,
-      });
-      const items = res.data.items || [];
-      allMeetings.push(...items);
-      cursor = res.data.next_cursor || null;
-      pageCount++;
-      if (pageCount >= MAX_PAGES) break;
-    } while (cursor);
-    console.log(`[Fathom] Fetched ${allMeetings.length} external meetings across ${pageCount} pages`);
-    return allMeetings;
+    // Hard cap: if Fathom takes >45s total, return whatever we got so far
+    return await Promise.race([
+      fetchFathomMeetingsRaw(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Fathom fetch timeout')), 45000)),
+    ]);
   } catch (err) {
-    console.warn('[Fathom] Failed to fetch meetings:', err.message);
+    console.warn('[Fathom] Skipping meeting counts:', err.message);
     return [];
   }
 }
@@ -545,19 +556,34 @@ function countFathomMeetingsPerOrg(meetings) {
   return counts;
 }
 
-// Update buildTTLData to accept fathomCounts
+// Two-layer cache: Fathom meetings (30 min) + TTL data (5 min)
+// Fathom cache persists across TTL invalidations so override saves don't re-hit Fathom
+let fathomCache = { data: null, ts: 0 };
+const FATHOM_CACHE_MS = 30 * 60 * 1000;
+
 let ttlCache = { data: null, ts: 0 };
 const TTL_CACHE_MS = 5 * 60 * 1000;
+
+async function getCachedFathomMeetings(forceFathom = false) {
+  if (!forceFathom && fathomCache.data && (Date.now() - fathomCache.ts) < FATHOM_CACHE_MS) {
+    console.log(`[Fathom] Using cached ${fathomCache.data.length} meetings`);
+    return fathomCache.data;
+  }
+  const meetings = await fetchFathomMeetings();
+  fathomCache = { data: meetings, ts: Date.now() };
+  return meetings;
+}
 
 async function fetchTTL(force = false) {
   if (!force && ttlCache.data && (Date.now() - ttlCache.ts) < TTL_CACHE_MS) {
     return ttlCache.data;
   }
   console.log('[TTL] Fetching Time-to-Launch data...');
+  // forceFathom only when explicitly requested (manual Refresh button)
   const [mtBilling, hsData, fathomMeetings] = await Promise.all([
     fetchCard(process.env.CARD_CS_BILLING_MT || 77),
     fetchHubSpotDeals(),
-    fetchFathomMeetings(),
+    getCachedFathomMeetings(force),  // only re-fetches Fathom on forced refresh
   ]);
   const fathomCounts = countFathomMeetingsPerOrg(fathomMeetings);
   console.log(`[Fathom] Meeting counts built for ${Object.keys(fathomCounts).length} unique orgs`);
