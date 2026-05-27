@@ -943,7 +943,7 @@
     const ids = selected.map(cb => Number(cb.dataset.id));
     // Fire all hide requests in parallel
     await Promise.all(ids.map(id => {
-      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      const org = TTL_DATA.orgs.find(o => Number(o.organization_id) === id);
       return fetch('/api/ttl/overrides', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -951,7 +951,7 @@
       });
     }));
     // Remove all hidden orgs from local data
-    TTL_DATA.orgs = TTL_DATA.orgs.filter(o => !ids.includes(o.organization_id));
+    TTL_DATA.orgs = TTL_DATA.orgs.filter(o => !ids.includes(Number(o.organization_id)));
     TTL_DATA.summary.total = TTL_DATA.orgs.length;
     if (btn) { btn.disabled = false; btn.textContent = 'Hide selected'; }
     document.getElementById('ttl-bulk-bar').style.display = 'none';
@@ -966,7 +966,7 @@
     if (btn) { btn.disabled = true; btn.textContent = 'Marking…'; }
     const ids = selected.map(cb => Number(cb.dataset.id));
     await Promise.all(ids.map(id => {
-      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      const org = TTL_DATA.orgs.find(o => Number(o.organization_id) === id);
       return fetch('/api/ttl/overrides', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -975,7 +975,7 @@
     }));
     // Update orgs locally: mark as lost, clear onboarding days
     ids.forEach(id => {
-      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      const org = TTL_DATA.orgs.find(o => Number(o.organization_id) === id);
       if (org) {
         org.is_lost = true;
         org.is_launched = false;
@@ -998,7 +998,7 @@
     if (btn) { btn.disabled = true; btn.textContent = 'Tagging…'; }
     const ids = selected.map(cb => Number(cb.dataset.id));
     await Promise.all(ids.map(id => {
-      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      const org = TTL_DATA.orgs.find(o => Number(o.organization_id) === id);
       return fetch('/api/ttl/overrides', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1006,7 +1006,7 @@
       });
     }));
     ids.forEach(id => {
-      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      const org = TTL_DATA.orgs.find(o => Number(o.organization_id) === id);
       if (org) org.is_v1_migration = true;
     });
     if (btn) { btn.disabled = false; btn.textContent = '🔄 Tag as V1 Migration'; }
@@ -1030,7 +1030,7 @@
     if (btn) { btn.disabled = true; btn.textContent = 'Applying…'; }
     const ids = selected.map(cb => Number(cb.dataset.id));
     await Promise.all(ids.map(id => {
-      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      const org = TTL_DATA.orgs.find(o => Number(o.organization_id) === id);
       return fetch('/api/ttl/overrides', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1038,7 +1038,7 @@
       });
     }));
     ids.forEach(id => {
-      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      const org = TTL_DATA.orgs.find(o => Number(o.organization_id) === id);
       if (org) org.block_reason = reason;
     });
     if (btn) { btn.disabled = false; btn.textContent = '✔ Apply'; }
