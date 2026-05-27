@@ -683,11 +683,12 @@
     ttlFiltered = TTL_DATA.orgs.filter(o => {
       if (owner && o.hs_owner !== owner) return false;
       if (status === 'launched' && !o.is_launched) return false;
+      if (status === 'in_onboarding' && (o.is_launched || o.is_lost)) return false;
+      if (status === 'lost' && !o.is_lost) return false;
       if (integration) {
         const orgInts = (o.integrations || '').split(', ').map(s => s.trim()).filter(Boolean);
         if (!orgInts.includes(integration)) return false;
       }
-      if (status === 'in_onboarding' && o.is_launched) return false;
       if (search && !(o.organization_name || '').toLowerCase().includes(search)) return false;
       return true;
     });
@@ -702,8 +703,8 @@
     $('#ttl-kpis').innerHTML = kpiCards([
       { label: 'Total Orgs', value: fmt(s.total) },
       { label: 'In Onboarding', value: fmt(s.in_onboarding), sub: s.avg_days_open != null ? `${s.avg_days_open}d avg open` : null },
-      { label: 'Launched', value: fmt(s.launched) },
-      { label: '% Launched', value: s.pct_launched + '%', cls: s.pct_launched >= 50 ? 'success' : 'warning' },
+      { label: 'Launched', value: fmt(s.launched), sub: s.pct_launched + '% of total', cls: 'success' },
+      { label: 'Lost (never launched)', value: fmt(s.lost || 0), sub: (s.pct_lost || 0) + '% of total', cls: (s.lost || 0) > 0 ? 'danger' : '' },
       { label: 'Avg Days to Launch', value: s.avg_days_to_launch != null ? `${s.avg_days_to_launch}d` : '-', sub: s.median_days_to_launch != null ? `Median: ${s.median_days_to_launch}d` : null },
       { label: 'Longest Open', value: s.longest_open != null ? `${s.longest_open}d` : '-', cls: s.longest_open > 60 ? 'danger' : '' },
     ]);
@@ -721,7 +722,7 @@
       { label: '31-60d', count: 0 }, { label: '61-90d', count: 0 }, { label: '90d+', count: 0 },
     ];
     const ownerMap = {};
-    let launched = 0, inOnboarding = 0;
+    let launched = 0, inOnboarding = 0, lostCount = 0;
     orgs.forEach(o => {
       if (o.is_launched) {
         launched++;
@@ -731,6 +732,8 @@
         else if (d <= 60) launchDist[2].count++;
         else if (d <= 90) launchDist[3].count++;
         else launchDist[4].count++;
+      } else if (o.is_lost) {
+        lostCount++;
       } else {
         inOnboarding++;
         const d = o.days_in_onboarding || 0;
@@ -741,13 +744,15 @@
         else agingBuckets[4].count++;
       }
       const owner = o.hs_owner || 'Unassigned';
-      if (!ownerMap[owner]) ownerMap[owner] = { owner, launched: 0, in_onboarding: 0 };
-      if (o.is_launched) ownerMap[owner].launched++; else ownerMap[owner].in_onboarding++;
+      if (!ownerMap[owner]) ownerMap[owner] = { owner, launched: 0, in_onboarding: 0, lost: 0 };
+      if (o.is_launched) ownerMap[owner].launched++;
+      else if (o.is_lost) ownerMap[owner].lost++;
+      else ownerMap[owner].in_onboarding++;
     });
     return {
       agingBuckets, launchDist,
       byOwner: Object.values(ownerMap).sort((a, b) => b.in_onboarding - a.in_onboarding),
-      launched, inOnboarding,
+      launched, inOnboarding, lostCount,
     };
   }
 
@@ -773,13 +778,14 @@
       datasets: [
         { label: 'In Onboarding', data: agg.byOwner.map(o => o.in_onboarding), backgroundColor: COLORS.orange, borderRadius: 2 },
         { label: 'Launched', data: agg.byOwner.map(o => o.launched), backgroundColor: COLORS.green, borderRadius: 2 },
+        { label: 'Lost', data: agg.byOwner.map(o => o.lost || 0), backgroundColor: COLORS.red, borderRadius: 2 },
       ]
     }, { scales: { x: { stacked: true }, y: { stacked: true } } });
 
     makeChart('ttl-launch-rate', 'doughnut', {
-      labels: ['Launched', 'In Onboarding'],
-      datasets: [{ data: [agg.launched, agg.inOnboarding],
-        backgroundColor: [COLORS.green, COLORS.orangeLight], borderWidth: 0 }]
+      labels: ['Launched', 'In Onboarding', 'Lost'],
+      datasets: [{ data: [agg.launched, agg.inOnboarding, agg.lostCount],
+        backgroundColor: [COLORS.green, COLORS.orangeLight, COLORS.red], borderWidth: 0 }]
     }, { cutout: '65%' });
   }
 
@@ -792,12 +798,15 @@
     { key: 'active_billing_date', label: 'Billing Start', type: 'date_ov', sortable: true },
     { key: 'days_to_launch', label: 'Days to Launch', type: 'num', sortable: true },
     { key: 'days_in_onboarding', label: 'Days Open', type: 'num_heat', sortable: true },
+    { key: 'company_size', label: 'Size', sortable: true },
     { key: 'active_user_count', label: 'Active Users', type: 'num', sortable: true },
+    { key: 'estimated_billable', label: 'Est. Billable', type: 'num', sortable: true },
+    { key: 'onboarding_fee', label: 'Onboarding Fee', type: 'dollar', sortable: true },
+    { key: 'estimated_mrr', label: 'Est. MRR', type: 'dollar', sortable: true },
     { key: 'integrations', label: 'Integrations' },
     { key: 'fathom_meetings', label: 'Meetings', type: 'num', sortable: true },
     { key: 'hs_owner', label: 'HS Owner', sortable: true },
     { key: 'hs_stage', label: 'HS Stage' },
-    { key: 'hs_employees', label: 'Employees', type: 'num', sortable: true },
   ];
 
   function setupTTLTableSort() {
@@ -826,7 +835,10 @@
     let rows = [...ttlFiltered];
     rows.sort((a, b) => {
       let va = a[ttlSortCol], vb = b[ttlSortCol];
-      if (ttlSortCol === 'is_launched') { va = va ? 1 : 0; vb = vb ? 1 : 0; }
+      if (ttlSortCol === 'is_launched') {
+        const statusVal = o => o.is_lost ? 0 : o.is_launched ? 2 : 1;
+        va = statusVal(a); vb = statusVal(b);
+      }
       if (va == null) va = -Infinity;
       if (vb == null) vb = -Infinity;
       if (typeof va === 'string') va = va.toLowerCase();
@@ -837,9 +849,11 @@
     });
     const tbody = $('#ttl-tbody');
     tbody.innerHTML = rows.map(o => {
-      const rowCls = (!o.is_launched && o.days_in_onboarding > 60) ? 'at-risk' :
-                     (!o.is_launched && o.days_in_onboarding > 30) ? 'prepay' : '';
-      return `<tr class="${rowCls}" data-org-id="${o.organization_id}">${TTL_COLS.map(c => `<td>${formatTTLCell(o[c.key], c.type, o)}</td>`).join('')}</tr>`;
+      const rowCls = o.is_lost ? ''
+        : (!o.is_launched && o.days_in_onboarding > 60) ? 'at-risk'
+        : (!o.is_launched && o.days_in_onboarding > 30) ? 'prepay' : '';
+      const rowStyle = o.is_lost ? ' style="background:#FFF5F5;color:#742A2A;opacity:0.85;"' : '';
+      return `<tr class="${rowCls}"${rowStyle} data-org-id="${o.organization_id}">${TTL_COLS.map(c => `<td>${formatTTLCell(o[c.key], c.type, o)}</td>`).join('')}</tr>`;
     }).join('');
     $('#ttl-table-count').textContent = `${rows.length} orgs`;
 
@@ -899,8 +913,41 @@
     renderTTL();
   }
 
+  async function bulkMarkLost() {
+    const selected = [...document.querySelectorAll('.ttl-row-check:checked')];
+    if (!selected.length) return;
+    const btn = document.getElementById('ttl-bulk-lost-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Marking…'; }
+    const ids = selected.map(cb => Number(cb.dataset.id));
+    await Promise.all(ids.map(id => {
+      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      return fetch('/api/ttl/overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ org_id: id, org_name: org ? org.organization_name : '', lost: true, hidden: false, manual_billing_date: null, notes: 'Marked lost' }),
+      });
+    }));
+    // Update orgs locally: mark as lost, clear onboarding days
+    ids.forEach(id => {
+      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      if (org) {
+        org.is_lost = true;
+        org.is_launched = false;
+        org.days_in_onboarding = null;
+      }
+    });
+    TTL_DATA.summary.lost = (TTL_DATA.summary.lost || 0) + ids.length;
+    TTL_DATA.summary.in_onboarding = Math.max(0, TTL_DATA.summary.in_onboarding - ids.length);
+    if (btn) { btn.disabled = false; btn.textContent = '🚫 Mark as Lost'; }
+    document.querySelectorAll('.ttl-row-check').forEach(c => c.checked = false);
+    document.getElementById('ttl-bulk-bar').style.display = 'none';
+    applyTTLFilters();
+    renderTTL();
+  }
+
   // Expose for inline onclick in HTML
   window.bulkHideSelected = bulkHideSelected;
+  window.bulkMarkLost = bulkMarkLost;
 
   function formatTTLCell(val, type, org) {
     switch (type) {
@@ -909,6 +956,7 @@
       case 'actions':
         return `<button class="ttl-edit-btn" data-id="${org.organization_id}" title="Edit override" style="border:none;background:transparent;cursor:pointer;padding:2px 6px;border-radius:4px;color:#718096;font-size:13px;">✏️</button>`;
       case 'ttl_status':
+        if (org.is_lost) return '<span class="status-pill" style="background:#FFF5F5;color:#C53030;border:1px solid #FC8181;">Lost</span>';
         return org.is_launched
           ? '<span class="status-pill billing">Launched</span>'
           : '<span class="status-pill inactive">In Onboarding</span>';
@@ -919,6 +967,7 @@
         return `<span title="${org.override_notes || 'Manual override'}" style="color:#805AD5;font-weight:600;">${d} ✏</span>`;
       }
       case 'num': return val != null ? fmt(val) : '<span style="color:#A0AEC0">-</span>';
+      case 'dollar': return val != null ? fmtDollar(val) : '<span style="color:#A0AEC0">-</span>';
       case 'num_heat': {
         if (val == null) return '<span style="color:#A0AEC0">-</span>';
         const color = val > 60 ? COLORS.red : val > 30 ? COLORS.orange : COLORS.green;
@@ -956,7 +1005,8 @@
     if (!org) return;
     _ttlOverrideOrgId = orgId;
     $('#ttl-override-orgname').textContent = `Org #${orgId}: ${org.organization_name}`;
-    $('#ttl-ov-hidden').checked = !!org._override_hidden;
+    $('#ttl-ov-hidden').checked = false;  // hidden orgs never show in modal; this is for fresh hides
+    $('#ttl-ov-lost').checked = !!org.is_lost;
     $('#ttl-ov-date').value = org.is_manual_date ? (org.active_billing_date || '').slice(0, 10) : '';
     $('#ttl-ov-notes').value = org.override_notes || '';
     const backdrop = $('#ttl-override-backdrop');
@@ -980,9 +1030,10 @@
       org.override_notes = null;
     } else {
       const hidden = $('#ttl-ov-hidden').checked;
+      const lostChecked = ($('#ttl-ov-lost') || {}).checked || false;
       const manualDate = $('#ttl-ov-date').value || null;
       const notes = $('#ttl-ov-notes').value;
-      const body = { org_id: _ttlOverrideOrgId, org_name: org.organization_name, hidden, manual_billing_date: manualDate, notes };
+      const body = { org_id: _ttlOverrideOrgId, org_name: org.organization_name, hidden, lost: lostChecked, manual_billing_date: manualDate, notes };
       const res = await fetch('/api/ttl/overrides', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
@@ -996,12 +1047,24 @@
       } else {
         // Update org fields locally
         org.override_notes = notes || null;
+        // Handle lost toggle
+        const wasLost = org.is_lost;
+        org.is_lost = lostChecked;
+        if (lostChecked && !wasLost) {
+          org.is_launched = false;
+          org.days_in_onboarding = null;
+          TTL_DATA.summary.lost = (TTL_DATA.summary.lost || 0) + 1;
+          TTL_DATA.summary.in_onboarding = Math.max(0, TTL_DATA.summary.in_onboarding - 1);
+        } else if (!lostChecked && wasLost) {
+          TTL_DATA.summary.lost = Math.max(0, (TTL_DATA.summary.lost || 0) - 1);
+        }
         if (manualDate) {
           const createdMs = org.organization_created_at ? new Date(org.organization_created_at).getTime() : null;
           const billingMs = new Date(manualDate).getTime();
           org.active_billing_date = manualDate;
           org.is_manual_date = true;
           org.is_launched = true;
+          org.is_lost = false;  // a manual billing date means they launched
           org.days_to_launch = createdMs ? Math.round((billingMs - createdMs) / 86400000) : null;
           org.days_in_onboarding = null;
         }
@@ -1031,7 +1094,8 @@
       const header = exportCols.map(c => c.label || c.key).join(',');
       const rows = ttlFiltered.map(o =>
         exportCols.map(c => {
-          if (c.key === 'is_launched') return o.is_launched ? 'Launched' : 'In Onboarding';
+          if (c.key === 'is_launched') return o.is_lost ? 'Lost' : o.is_launched ? 'Launched' : 'In Onboarding';
+          if (c.type === 'dollar') return v != null ? v : '';
           let v = o[c.key];
           if (v == null) return '';
           if (c.type === 'date' || c.type === 'date_ov') return shortDate(v);

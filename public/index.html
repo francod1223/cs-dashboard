@@ -165,6 +165,7 @@
           <option value="">All</option>
           <option value="in_onboarding">In Onboarding</option>
           <option value="launched">Launched</option>
+          <option value="lost">Lost</option>
         </select>
         <label>Integration</label>
         <select id="ttl-filter-integration"><option value="">All</option></select>
@@ -204,8 +205,9 @@
       <!-- Bulk action bar (shown when rows are checked) -->
       <div id="ttl-bulk-bar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#EBF8FF;border:1px solid #BEE3F8;border-radius:8px;margin-bottom:8px;">
         <span id="ttl-bulk-count" style="font-size:13px;font-weight:600;color:#2B6CB0;"></span>
-        <button id="ttl-bulk-hide-btn" onclick="bulkHideSelected()" style="padding:6px 16px;background:#C53030;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x1F648; Hide selected</button>
-        <span style="font-size:12px;color:#718096;">Hidden orgs are excluded from all counts &amp; charts. Use for test accounts and duplicates.</span>
+        <button id="ttl-bulk-lost-btn" onclick="bulkMarkLost()" style="padding:6px 16px;background:#744210;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x1F6AB; Mark as Lost</button>
+        <button id="ttl-bulk-hide-btn" onclick="bulkHideSelected()" style="padding:6px 16px;background:#4A5568;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x1F648; Hide selected</button>
+        <span style="font-size:12px;color:#718096;">Lost = paid impl fee, never launched. Hidden = test/duplicate accounts.</span>
         <button onclick="document.querySelectorAll('.ttl-row-check').forEach(c=>c.checked=false);document.getElementById('ttl-bulk-bar').style.display='none';" style="margin-left:auto;padding:4px 10px;border:1px solid #BEE3F8;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;">Clear</button>
       </div>
       <div class="details-wrap">
@@ -225,6 +227,12 @@
   <div style="background:#fff;border-radius:12px;padding:28px 32px;width:420px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,0.25);">
     <h3 style="margin:0 0 4px;font-size:16px;color:#1A202C;">Edit Org Override</h3>
     <p id="ttl-override-orgname" style="margin:0 0 20px;font-size:13px;color:#718096;"></p>
+
+    <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:14px;cursor:pointer;">
+      <input type="checkbox" id="ttl-ov-lost" style="width:16px;height:16px;accent-color:#C53030;">
+      <span><strong>Mark as Lost</strong> — paid impl fee, never launched<br>
+      <span style="color:#718096;font-size:12px;">(shown in table with red highlight, counted separately in stats)</span></span>
+    </label>
 
     <label style="display:flex;align-items:center;gap:10px;margin-bottom:18px;font-size:14px;cursor:pointer;">
       <input type="checkbox" id="ttl-ov-hidden" style="width:16px;height:16px;">

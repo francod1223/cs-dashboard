@@ -347,13 +347,33 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
     // Skip orgs marked hidden in overrides
     if (ov.hidden) return null;
 
+    const isLost = !!ov.lost;  // lost = paid impl fee, never launched, churned
+
+    // Derive company_size from active_user_count (same logic as transforms.js)
+    const activeUsers = Number(org.active_user_count) || 0;
+    const companySize = activeUsers <= 10 ? '1–10'
+      : activeUsers <= 25 ? '11–25'
+      : activeUsers <= 50 ? '26–50'
+      : activeUsers <= 100 ? '51–100' : '100+';
+
+    // Estimated billable (pre-launch uses active_user_count; post-launch uses snapshot)
+    const estimatedBillable = Number(org.latest_snapshot_billable_users) || Number(org.active_user_count) || null;
+
+    // Onboarding fee (stored in cents in Metabase)
+    const onboardingFee = org.onboarding_fee_amount_cents
+      ? Math.round(Number(org.onboarding_fee_amount_cents) / 100) : null;
+
+    // Estimated MRR ($20/user)
+    const estimatedMrr = estimatedBillable ? estimatedBillable * 20 : null;
+
     const createdAt = org.organization_created_at ? new Date(org.organization_created_at).getTime() : null;
     // Use manual billing date from override if set, otherwise use Metabase value
     const rawBillingDate = ov.manual_billing_date || org.active_billing_date;
     const billingDate = rawBillingDate ? new Date(rawBillingDate).getTime() : null;
-    const isLaunched = !!billingDate;
+    const isLaunched = !!billingDate && !isLost;  // lost orgs are treated as not launched
     const daysToLaunch = (isLaunched && createdAt) ? Math.round((billingDate - createdAt) / 86400000) : null;
-    const daysInOnboarding = (!isLaunched && createdAt) ? Math.round((now - createdAt) / 86400000) : null;
+    // In-onboarding days only applies to orgs actively being onboarded (not lost)
+    const daysInOnboarding = (!isLaunched && !isLost && createdAt) ? Math.round((now - createdAt) / 86400000) : null;
 
     const deal = matchDealToOrg(org.organization_name, deals);
     const dealCreated = deal ? new Date(deal.properties.createdate).getTime() : null;
@@ -366,6 +386,10 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
       active_billing_date: rawBillingDate,
       subscription_status: org.subscription_status,
       active_user_count: org.active_user_count,
+      company_size: companySize,
+      estimated_billable: estimatedBillable,
+      onboarding_fee: onboardingFee,
+      estimated_mrr: estimatedMrr,
       integrations: org.integrations,
       is_launched: isLaunched,
       days_to_launch: daysToLaunch,
@@ -378,6 +402,7 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
       deal_to_org_days: dealToOrgDays,
       hs_matched: !!deal,
       // Override metadata (shown in UI)
+      is_lost: isLost,
       is_manual_date: !!ov.manual_billing_date,
       override_notes: ov.notes || null,
       // Fathom lookup: try org name first, then matched deal name (since Fathom CRM matches use HS company names)
@@ -394,7 +419,8 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
   });
 
   const launched = enriched.filter(o => o.is_launched);
-  const inOnboarding = enriched.filter(o => !o.is_launched);
+  const lost = enriched.filter(o => o.is_lost);
+  const inOnboarding = enriched.filter(o => !o.is_launched && !o.is_lost);
   const launchTimes = launched.filter(o => o.days_to_launch != null && o.days_to_launch >= 0).map(o => o.days_to_launch);
   const onboardingDays = inOnboarding.filter(o => o.days_in_onboarding != null).map(o => o.days_in_onboarding);
 
@@ -436,10 +462,12 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
   const ownerMap = {};
   enriched.forEach(o => {
     const owner = o.hs_owner || 'Unassigned';
-    if (!ownerMap[owner]) ownerMap[owner] = { owner, launched: 0, in_onboarding: 0, days_sum: 0, days_count: 0 };
+    if (!ownerMap[owner]) ownerMap[owner] = { owner, launched: 0, lost: 0, in_onboarding: 0, days_sum: 0, days_count: 0 };
     if (o.is_launched) {
       ownerMap[owner].launched++;
       if (o.days_to_launch != null) { ownerMap[owner].days_sum += o.days_to_launch; ownerMap[owner].days_count++; }
+    } else if (o.is_lost) {
+      ownerMap[owner].lost++;
     } else {
       ownerMap[owner].in_onboarding++;
     }
@@ -447,6 +475,7 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
   const byOwner = Object.values(ownerMap).map(o => ({
     owner: o.owner,
     launched: o.launched,
+    lost: o.lost,
     in_onboarding: o.in_onboarding,
     avg_days: o.days_count ? Math.round(o.days_sum / o.days_count) : null,
   })).sort((a, b) => b.in_onboarding - a.in_onboarding);
@@ -456,8 +485,11 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
     summary: {
       total: enriched.length,
       launched: launched.length,
+      lost: lost.length,
       in_onboarding: inOnboarding.length,
+      // Launch rate: launched / (launched + lost + in_onboarding) — excludes nothing, shows true conversion
       pct_launched: enriched.length ? Math.round(launched.length / enriched.length * 100) : 0,
+      pct_lost: enriched.length ? Math.round(lost.length / enriched.length * 100) : 0,
       avg_days_to_launch: avgLaunch,
       median_days_to_launch: medLaunch,
       avg_days_open: avgOpen,
@@ -601,21 +633,30 @@ app.get('/api/ttl/overrides', requireAuth, (req, res) => {
   res.json(Object.values(ttlOverrides));
 });
 
+// Returns the full JSON string to paste into TTL_OVERRIDES_JSON on Render
+app.get('/api/ttl/overrides/export', requireAuth, (req, res) => {
+  const json = JSON.stringify(Object.values(ttlOverrides));
+  res.type('text/plain').send(json);
+});
+
 app.post('/api/ttl/overrides', requireAuth, (req, res) => {
-  const { org_id, org_name, hidden, manual_billing_date, notes } = req.body;
+  const { org_id, org_name, hidden, lost, manual_billing_date, notes } = req.body;
   if (!org_id) return res.status(400).json({ error: 'org_id required' });
   const id = Number(org_id);
   ttlOverrides[id] = {
     org_id: id,
     org_name: org_name || '',
     hidden: !!hidden,
+    lost: !!lost,
     manual_billing_date: manual_billing_date || null,
     notes: notes || '',
     updated_at: new Date().toISOString(),
   };
   ttlCache = { data: null, ts: 0 };  // invalidate cache so next fetch picks it up
-  console.log(`[TTL] Override saved for org ${id} (${org_name}): hidden=${hidden}, date=${manual_billing_date}`);
-  res.json({ ok: true, override: ttlOverrides[id], export_hint: JSON.stringify(Object.values(ttlOverrides)) });
+  const exportJson = JSON.stringify(Object.values(ttlOverrides));
+  console.log(`[TTL] Override saved for org ${id} (${org_name}): hidden=${hidden}, lost=${lost}, date=${manual_billing_date}`);
+  console.log(`[TTL] TTL_OVERRIDES_JSON (paste into Render env var to persist):\n${exportJson}`);
+  res.json({ ok: true, override: ttlOverrides[id], export_hint: exportJson });
 });
 
 app.delete('/api/ttl/overrides/:org_id', requireAuth, (req, res) => {
