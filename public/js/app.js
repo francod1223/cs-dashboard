@@ -672,6 +672,8 @@
 
     $('#ttl-filter-status').addEventListener('change', () => { applyTTLFilters(); renderTTL(); });
     $('#ttl-filter-search').addEventListener('input', () => { applyTTLFilters(); renderTTL(); });
+    const hideV1El = document.getElementById('ttl-filter-hide-v1');
+    if (hideV1El) hideV1El.addEventListener('change', () => { applyTTLFilters(); renderTTL(); });
   }
 
   function applyTTLFilters() {
@@ -680,11 +682,15 @@
     const status = $('#ttl-filter-status').value;
     const integration = ($('#ttl-filter-integration') || {}).value || '';
     const search = ($('#ttl-filter-search').value || '').toLowerCase().trim();
+    const hideV1El = document.getElementById('ttl-filter-hide-v1');
+    const hideV1 = hideV1El ? hideV1El.checked : true;  // default: hide V1 migrations
     ttlFiltered = TTL_DATA.orgs.filter(o => {
       if (owner && o.hs_owner !== owner) return false;
       if (status === 'launched' && !o.is_launched) return false;
-      if (status === 'in_onboarding' && (o.is_launched || o.is_lost)) return false;
+      if (status === 'in_onboarding' && (o.is_launched || o.is_lost || o.is_v1_migration)) return false;
       if (status === 'lost' && !o.is_lost) return false;
+      if (status === 'v1_migration' && !o.is_v1_migration) return false;
+      if (hideV1 && o.is_v1_migration && status !== 'v1_migration') return false;
       if (integration) {
         const orgInts = (o.integrations || '').split(', ').map(s => s.trim()).filter(Boolean);
         if (!orgInts.includes(integration)) return false;
@@ -692,7 +698,9 @@
       if (search && !(o.organization_name || '').toLowerCase().includes(search)) return false;
       return true;
     });
-    $('#ttl-filter-count').textContent = `${ttlFiltered.length} of ${TTL_DATA.summary.total} orgs`;
+    const v1Count = TTL_DATA.orgs.filter(o => o.is_v1_migration).length;
+    const hiddenNote = hideV1 && v1Count > 0 ? ` (${v1Count} V1 hidden)` : '';
+    $('#ttl-filter-count').textContent = `${ttlFiltered.length} of ${TTL_DATA.summary.total} orgs${hiddenNote}`;
   }
 
   function renderTTL() {
@@ -787,6 +795,38 @@
       datasets: [{ data: [agg.launched, agg.inOnboarding, agg.lostCount],
         backgroundColor: [COLORS.green, COLORS.orangeLight, COLORS.red], borderWidth: 0 }]
     }, { cutout: '65%' });
+
+    // Block reason breakdown — only show if any orgs have a block reason set
+    const BR_LABELS = {
+      technical_problems: 'Technical problems',
+      worried_overpaying: 'Worried about overpaying',
+      budget_issues: 'Budget issues',
+      internal_decision: 'Internal decision-making',
+      no_technical_leader: 'No technical leader',
+      key_champion_left: 'Key champion left',
+      never_responded: 'Never responded / ghosted',
+      timing_seasonal: 'Timing / seasonal pause',
+    };
+    const brCounts = {};
+    ttlFiltered.filter(o => o.block_reason).forEach(o => {
+      const label = BR_LABELS[o.block_reason] || o.block_reason;
+      brCounts[label] = (brCounts[label] || 0) + 1;
+    });
+    const brRow = document.getElementById('ttl-block-reason-row');
+    if (brRow) {
+      if (Object.keys(brCounts).length > 0) {
+        brRow.style.display = '';
+        const brLabels = Object.keys(brCounts).sort((a, b) => brCounts[b] - brCounts[a]);
+        makeChart('ttl-block-reasons', 'bar', {
+          labels: brLabels,
+          datasets: [{ label: 'Orgs', data: brLabels.map(l => brCounts[l]),
+            backgroundColor: [COLORS.red, COLORS.orange, COLORS.yellow, COLORS.purple, COLORS.blue, COLORS.green, '#FC8181', '#F6AD55'],
+            borderRadius: 6 }]
+        }, { indexAxis: 'y', plugins: { legend: { display: false } } });
+      } else {
+        brRow.style.display = 'none';
+      }
+    }
   }
 
   const TTL_COLS = [
@@ -801,12 +841,11 @@
     { key: 'company_size', label: 'Size', sortable: true },
     { key: 'active_user_count', label: 'Active Users', type: 'num', sortable: true },
     { key: 'estimated_billable', label: 'Est. Billable', type: 'num', sortable: true },
-    { key: 'onboarding_fee', label: 'Onboarding Fee', type: 'dollar', sortable: true },
-    { key: 'estimated_mrr', label: 'Est. MRR', type: 'dollar', sortable: true },
     { key: 'integrations', label: 'Integrations' },
     { key: 'fathom_meetings', label: 'Meetings', type: 'num', sortable: true },
     { key: 'hs_owner', label: 'HS Owner', sortable: true },
     { key: 'hs_stage', label: 'HS Stage' },
+    { key: 'block_reason', label: 'Block Reason', type: 'block_reason' },
   ];
 
   function setupTTLTableSort() {
@@ -850,9 +889,12 @@
     const tbody = $('#ttl-tbody');
     tbody.innerHTML = rows.map(o => {
       const rowCls = o.is_lost ? ''
+        : o.is_v1_migration ? ''
         : (!o.is_launched && o.days_in_onboarding > 60) ? 'at-risk'
         : (!o.is_launched && o.days_in_onboarding > 30) ? 'prepay' : '';
-      const rowStyle = o.is_lost ? ' style="background:#FFF5F5;color:#742A2A;opacity:0.85;"' : '';
+      const rowStyle = o.is_lost ? ' style="background:#FFF5F5;color:#742A2A;opacity:0.85;"'
+        : o.is_v1_migration ? ' style="background:#FAF5FF;opacity:0.9;"'
+        : '';
       return `<tr class="${rowCls}"${rowStyle} data-org-id="${o.organization_id}">${TTL_COLS.map(c => `<td>${formatTTLCell(o[c.key], c.type, o)}</td>`).join('')}</tr>`;
     }).join('');
     $('#ttl-table-count').textContent = `${rows.length} orgs`;
@@ -945,9 +987,35 @@
     renderTTL();
   }
 
+  async function bulkMarkV1() {
+    const selected = [...document.querySelectorAll('.ttl-row-check:checked')];
+    if (!selected.length) return;
+    const btn = document.getElementById('ttl-bulk-v1-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Tagging…'; }
+    const ids = selected.map(cb => Number(cb.dataset.id));
+    await Promise.all(ids.map(id => {
+      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      return fetch('/api/ttl/overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ org_id: id, org_name: org ? org.organization_name : '', is_v1_migration: true, notes: 'V1 Migration' }),
+      });
+    }));
+    ids.forEach(id => {
+      const org = TTL_DATA.orgs.find(o => o.organization_id === id);
+      if (org) org.is_v1_migration = true;
+    });
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Tag as V1 Migration'; }
+    document.querySelectorAll('.ttl-row-check').forEach(c => c.checked = false);
+    document.getElementById('ttl-bulk-bar').style.display = 'none';
+    applyTTLFilters();
+    renderTTL();
+  }
+
   // Expose for inline onclick in HTML
   window.bulkHideSelected = bulkHideSelected;
   window.bulkMarkLost = bulkMarkLost;
+  window.bulkMarkV1 = bulkMarkV1;
 
   function formatTTLCell(val, type, org) {
     switch (type) {
@@ -957,9 +1025,24 @@
         return `<button class="ttl-edit-btn" data-id="${org.organization_id}" title="Edit override" style="border:none;background:transparent;cursor:pointer;padding:2px 6px;border-radius:4px;color:#718096;font-size:13px;">✏️</button>`;
       case 'ttl_status':
         if (org.is_lost) return '<span class="status-pill" style="background:#FFF5F5;color:#C53030;border:1px solid #FC8181;">Lost</span>';
+        if (org.is_v1_migration) return '<span class="status-pill" style="background:#FAF5FF;color:#553C9A;border:1px solid #D6BCFA;">V1 Migration</span>';
         return org.is_launched
           ? '<span class="status-pill billing">Launched</span>'
           : '<span class="status-pill inactive">In Onboarding</span>';
+      case 'block_reason': {
+        if (!val) return '<span style="color:#A0AEC0">-</span>';
+        const BR_LABELS = {
+          technical_problems: 'Technical problems',
+          worried_overpaying: 'Overpaying concern',
+          budget_issues: 'Budget issues',
+          internal_decision: 'Internal decision',
+          no_technical_leader: 'No tech leader',
+          key_champion_left: 'Champion left',
+          never_responded: 'Never responded',
+          timing_seasonal: 'Timing / seasonal',
+        };
+        return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#FFFAF0;color:#744210;border:1px solid #FBD38D;" title="${BR_LABELS[val] || val}">${BR_LABELS[val] || val}</span>`;
+      }
       case 'date': return shortDate(val);
       case 'date_ov': {
         const d = shortDate(val);
@@ -1007,6 +1090,10 @@
     $('#ttl-override-orgname').textContent = `Org #${orgId}: ${org.organization_name}`;
     $('#ttl-ov-hidden').checked = false;  // hidden orgs never show in modal; this is for fresh hides
     $('#ttl-ov-lost').checked = !!org.is_lost;
+    const v1El = $('#ttl-ov-v1');
+    if (v1El) v1El.checked = !!org.is_v1_migration;
+    const brEl = $('#ttl-ov-block-reason');
+    if (brEl) brEl.value = org.block_reason || '';
     $('#ttl-ov-date').value = org.is_manual_date ? (org.active_billing_date || '').slice(0, 10) : '';
     $('#ttl-ov-notes').value = org.override_notes || '';
     const backdrop = $('#ttl-override-backdrop');
@@ -1031,9 +1118,11 @@
     } else {
       const hidden = $('#ttl-ov-hidden').checked;
       const lostChecked = ($('#ttl-ov-lost') || {}).checked || false;
+      const v1Migration = ($('#ttl-ov-v1') || {}).checked || false;
+      const blockReason = ($('#ttl-ov-block-reason') || {}).value || null;
       const manualDate = $('#ttl-ov-date').value || null;
       const notes = $('#ttl-ov-notes').value;
-      const body = { org_id: _ttlOverrideOrgId, org_name: org.organization_name, hidden, lost: lostChecked, manual_billing_date: manualDate, notes };
+      const body = { org_id: _ttlOverrideOrgId, org_name: org.organization_name, hidden, lost: lostChecked, is_v1_migration: v1Migration, block_reason: blockReason, manual_billing_date: manualDate, notes };
       const res = await fetch('/api/ttl/overrides', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
@@ -1047,6 +1136,8 @@
       } else {
         // Update org fields locally
         org.override_notes = notes || null;
+        org.is_v1_migration = v1Migration;
+        org.block_reason = blockReason || null;
         // Handle lost toggle
         const wasLost = org.is_lost;
         org.is_lost = lostChecked;

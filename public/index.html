@@ -166,11 +166,16 @@
           <option value="in_onboarding">In Onboarding</option>
           <option value="launched">Launched</option>
           <option value="lost">Lost</option>
+          <option value="v1_migration">V1 Migration</option>
         </select>
         <label>Integration</label>
         <select id="ttl-filter-integration"><option value="">All</option></select>
         <label>Search</label>
         <input type="text" id="ttl-filter-search" class="search-input" placeholder="Search org name&#8230;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;white-space:nowrap;">
+          <input type="checkbox" id="ttl-filter-hide-v1" checked style="accent-color:#805AD5;width:14px;height:14px;">
+          Hide V1 Migrations
+        </label>
         <span class="filter-count" id="ttl-filter-count"></span>
       </div>
 
@@ -196,6 +201,14 @@
         </div>
       </div>
 
+      <!-- Block reason chart -->
+      <div class="chart-row" id="ttl-block-reason-row" style="display:none;">
+        <div class="chart-box" style="flex:1;">
+          <h3>Why Aren&#x2019;t They Launching? <span style="font-size:12px;font-weight:400;color:#718096;">(orgs with a block reason set)</span></h3>
+          <canvas id="ttl-block-reasons"></canvas>
+        </div>
+      </div>
+
       <!-- Table -->
       <div class="table-controls">
         <span class="filter-count" id="ttl-table-count"></span>
@@ -206,8 +219,9 @@
       <div id="ttl-bulk-bar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#EBF8FF;border:1px solid #BEE3F8;border-radius:8px;margin-bottom:8px;">
         <span id="ttl-bulk-count" style="font-size:13px;font-weight:600;color:#2B6CB0;"></span>
         <button id="ttl-bulk-lost-btn" onclick="bulkMarkLost()" style="padding:6px 16px;background:#744210;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x1F6AB; Mark as Lost</button>
+        <button id="ttl-bulk-v1-btn" onclick="bulkMarkV1()" style="padding:6px 16px;background:#553C9A;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x1F504; Tag as V1 Migration</button>
         <button id="ttl-bulk-hide-btn" onclick="bulkHideSelected()" style="padding:6px 16px;background:#4A5568;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">&#x1F648; Hide selected</button>
-        <span style="font-size:12px;color:#718096;">Lost = paid impl fee, never launched. Hidden = test/duplicate accounts.</span>
+        <span style="font-size:12px;color:#718096;">Lost = paid impl fee, never launched. V1 = migrating from v1. Hidden = test/duplicate accounts.</span>
         <button onclick="document.querySelectorAll('.ttl-row-check').forEach(c=>c.checked=false);document.getElementById('ttl-bulk-bar').style.display='none';" style="margin-left:auto;padding:4px 10px;border:1px solid #BEE3F8;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;">Clear</button>
       </div>
       <div class="details-wrap">
@@ -234,11 +248,32 @@
       <span style="color:#718096;font-size:12px;">(shown in table with red highlight, counted separately in stats)</span></span>
     </label>
 
+    <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:14px;cursor:pointer;">
+      <input type="checkbox" id="ttl-ov-v1" style="width:16px;height:16px;accent-color:#805AD5;">
+      <span><strong>V1 Migration</strong> — transitioning from Protiv v1<br>
+      <span style="color:#718096;font-size:12px;">(shown with purple badge; hidden by default in metrics — use filter toggle to show)</span></span>
+    </label>
+
     <label style="display:flex;align-items:center;gap:10px;margin-bottom:18px;font-size:14px;cursor:pointer;">
       <input type="checkbox" id="ttl-ov-hidden" style="width:16px;height:16px;">
       <span><strong>Hide this org</strong> — exclude from all counts &amp; charts<br>
-      <span style="color:#718096;font-size:12px;">(use for test accounts, v1 duplicates, sales-only orgs)</span></span>
+      <span style="color:#718096;font-size:12px;">(use for test accounts, sales-only orgs)</span></span>
     </label>
+
+    <div style="margin-bottom:16px;">
+      <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:#4A5568;">Block Reason <span style="font-weight:400;color:#718096;">(why haven't they launched?)</span></label>
+      <select id="ttl-ov-block-reason" style="width:100%;box-sizing:border-box;border:1px solid #E2E8F0;border-radius:6px;padding:8px 10px;font-size:14px;background:#fff;">
+        <option value="">None / not set</option>
+        <option value="technical_problems">Technical problems</option>
+        <option value="worried_overpaying">Worried about overpaying</option>
+        <option value="budget_issues">Budget issues</option>
+        <option value="internal_decision">Internal decision-making</option>
+        <option value="no_technical_leader">No technical leader</option>
+        <option value="key_champion_left">Key champion left</option>
+        <option value="never_responded">Never responded / ghosted</option>
+        <option value="timing_seasonal">Timing / seasonal pause</option>
+      </select>
+    </div>
 
     <div style="margin-bottom:16px;">
       <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:#4A5568;">Manual Billing Start Date</label>

@@ -253,7 +253,10 @@ let ttlOverrides = {};   // keyed by org_id (number)
 // ---------------------------------------------------------------------------
 // HubSpot — Time to Launch
 // ---------------------------------------------------------------------------
-const HS_PIPELINE = '867839032';
+// Pipeline ID can be overridden via HUBSPOT_PIPELINE_ID env var.
+// Set HUBSPOT_PIPELINE_ID in Render to the correct "V2 launch" pipeline.
+// On first deploy, check server logs for "[HubSpot] Available pipelines:" to find the right ID.
+const HS_PIPELINE = process.env.HUBSPOT_PIPELINE_ID || '867839032';
 const HS_OWNER_MAP = {
   '1917156077': 'Ryan McCallion',
   '79820034': 'Alexander Skodras',
@@ -263,11 +266,29 @@ const HS_OWNER_MAP = {
   '151071828': 'David Franco',
 };
 
+async function logHubSpotPipelines(apiKey) {
+  try {
+    const res = await axios.get('https://api.hubapi.com/crm/v3/pipelines/deals',
+      { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 });
+    const pipelines = (res.data.results || []).map(p => `  ${p.id} = "${p.label}"`).join('\n');
+    console.log(`[HubSpot] Available pipelines (set HUBSPOT_PIPELINE_ID to the correct one):\n${pipelines}`);
+    console.log(`[HubSpot] Currently using pipeline: ${HS_PIPELINE}`);
+  } catch (e) {
+    console.warn('[HubSpot] Could not list pipelines:', e.message);
+  }
+}
+
+let _pipelinesLogged = false;
 async function fetchHubSpotDeals() {
   const apiKey = process.env.HUBSPOT_API_KEY;
   if (!apiKey) {
     console.log('[HubSpot] HUBSPOT_API_KEY not set — skipping deal enrichment');
     return { deals: [], stages: {} };
+  }
+  // Log all pipelines once at startup so we can identify the correct "V2 launch" pipeline ID
+  if (!_pipelinesLogged) {
+    _pipelinesLogged = true;
+    logHubSpotPipelines(apiKey).catch(() => {});
   }
   try {
     const [dealsRes, stagesRes] = await Promise.all([
@@ -282,7 +303,7 @@ async function fetchHubSpotDeals() {
     ]);
     const stages = {};
     (stagesRes.data.results || []).forEach(s => { stages[s.id] = s.label; });
-    console.log(`[HubSpot] Fetched ${(dealsRes.data.results || []).length} deals, ${Object.keys(stages).length} stages`);
+    console.log(`[HubSpot] Fetched ${(dealsRes.data.results || []).length} deals from pipeline ${HS_PIPELINE}, ${Object.keys(stages).length} stages`);
     return { deals: dealsRes.data.results || [], stages };
   } catch (err) {
     console.warn('[HubSpot] Failed to fetch deals:', err.message);
@@ -348,6 +369,7 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
     if (ov.hidden) return null;
 
     const isLost = !!ov.lost;  // lost = paid impl fee, never launched, churned
+    const isV1Migration = !!ov.is_v1_migration;  // transitioning from Protiv v1 — excluded from new-customer metrics by default
 
     // Derive company_size from active_user_count (same logic as transforms.js)
     const activeUsers = Number(org.active_user_count) || 0;
@@ -403,6 +425,8 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
       hs_matched: !!deal,
       // Override metadata (shown in UI)
       is_lost: isLost,
+      is_v1_migration: isV1Migration,
+      block_reason: ov.block_reason || null,
       is_manual_date: !!ov.manual_billing_date,
       override_notes: ov.notes || null,
       // Fathom lookup: try org name first, then matched deal name (since Fathom CRM matches use HS company names)
@@ -494,6 +518,7 @@ function buildTTLData(orgs, deals, stages, overrides = {}, fathomCounts = {}) {
       median_days_to_launch: medLaunch,
       avg_days_open: avgOpen,
       longest_open: longestOpen,
+      v1_migrations: enriched.filter(o => o.is_v1_migration).length,
       hs_matched: enriched.filter(o => o.hs_matched).length,
       fathom_matched: enriched.filter(o => o.fathom_meetings != null).length,
     },
@@ -640,7 +665,7 @@ app.get('/api/ttl/overrides/export', requireAuth, (req, res) => {
 });
 
 app.post('/api/ttl/overrides', requireAuth, (req, res) => {
-  const { org_id, org_name, hidden, lost, manual_billing_date, notes } = req.body;
+  const { org_id, org_name, hidden, lost, is_v1_migration, block_reason, manual_billing_date, notes } = req.body;
   if (!org_id) return res.status(400).json({ error: 'org_id required' });
   const id = Number(org_id);
   ttlOverrides[id] = {
@@ -648,13 +673,15 @@ app.post('/api/ttl/overrides', requireAuth, (req, res) => {
     org_name: org_name || '',
     hidden: !!hidden,
     lost: !!lost,
+    is_v1_migration: !!is_v1_migration,
+    block_reason: block_reason || null,
     manual_billing_date: manual_billing_date || null,
     notes: notes || '',
     updated_at: new Date().toISOString(),
   };
   ttlCache = { data: null, ts: 0 };  // invalidate cache so next fetch picks it up
   const exportJson = JSON.stringify(Object.values(ttlOverrides));
-  console.log(`[TTL] Override saved for org ${id} (${org_name}): hidden=${hidden}, lost=${lost}, date=${manual_billing_date}`);
+  console.log(`[TTL] Override saved for org ${id} (${org_name}): hidden=${hidden}, lost=${lost}, v1=${is_v1_migration}, block=${block_reason}`);
   console.log(`[TTL] TTL_OVERRIDES_JSON (paste into Render env var to persist):\n${exportJson}`);
   res.json({ ok: true, override: ttlOverrides[id], export_hint: exportJson });
 });
